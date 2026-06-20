@@ -60,3 +60,6 @@ profiles/moxui-*/
 **/moxui-reviewer/
 **/SOUL.md
 **/profile.yaml
+
+# Team docs (LOCAL-ONLY — use ~/.hermes/shared/moxui/ for team coordination instead)
+docs/TEAM.md
