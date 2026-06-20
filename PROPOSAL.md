@@ -640,6 +640,8 @@ Cross-Origin-Resource-Policy: same-origin
 | **Deploy order** | homelab ก่อน → scale production ✅ |
 | **Auth model** | ใส่ครบทุกตัว (local + 2FA TOTP + WebAuthn + OIDC Google + LDAP/AD + RBAC) ✅ |
 | **Container registry** | ghcr.io (GitHub Container Registry) ✅ |
+| **Domain name** | configurable at deploy time (ไม่ hardcode — ใส่ผ่าน env var / config) ✅ |
+| **Initial Proxmox credentials** | ใช้ root account ของ Proxmox (PAM realm) ✅ |
 
 ---
 
