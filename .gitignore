@@ -47,3 +47,16 @@ coverage/
 # Docker
 Dockerfile.local
 docker-compose.override.yml
+
+# Hermes profiles (LOCAL-ONLY — never push to GitHub)
+# Team uses 3 profiles: moxui-pm, moxui-coder, moxui-reviewer
+# Located at ~/.hermes/profiles/moxui-*/
+# NOT part of the project repo (intentional separation)
+/.hermes/
+hermes/
+profiles/moxui-*/
+**/moxui-pm/
+**/moxui-coder/
+**/moxui-reviewer/
+**/SOUL.md
+**/profile.yaml

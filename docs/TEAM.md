@@ -1,9 +1,39 @@
 # 👥 MoxUI — Team
 
 > **Project:** moxui — Modern Proxmox UI
-> **Repository:** github.com/kungjom26/moxui
-> **Status:** Pre-alpha (Phase 0 starts soon)
-> **Last updated:** 2026-06-20
+**Repository:** github.com/kungjom26/moxui
+**Status:** Pre-alpha (Phase 0 starts soon)
+**Last updated:** 2026-06-20
+
+---
+
+## 🔒 IMPORTANT: Hermes profiles are LOCAL-ONLY
+
+**The 3 Hermes profiles (`moxui-pm`, `moxui-coder`, `moxui-reviewer`) are NEVER pushed to GitHub.**
+
+| Where they live | Where they DON'T live |
+|---|---|
+| ✅ `~/.hermes/profiles/moxui-*/` (your local machine) | ❌ `github.com/kungjom26/moxui` |
+| ✅ `~/.hermes/shared/moxui/` (shared workspace) | ❌ Any public repo |
+
+**Why?** Hermes profiles contain local persona data, skills, and memories — they're machine-specific, not project assets. The project repo contains only code + docs.
+
+**What's in each profile:**
+- `SOUL.md` (persona instructions)
+- `profile.yaml` (profile config)
+- `skills/` (custom tools)
+- `memories/`, `sessions/`, `cache/` (local data)
+
+**What goes into the GitHub repo:**
+- `~/projects/moxui/` (code + docs only)
+- NOT `~/.hermes/profiles/moxui-*/`
+
+**If you accidentally try to commit profiles:**
+- `.gitignore` has `**/moxui-pm/`, `**/moxui-coder/`, `**/moxui-reviewer/`, `**/SOUL.md`, `**/profile.yaml`
+- Profiles are outside the repo directory anyway
+- If someone symlinks profiles into the repo, gitignore blocks them
+
+**Rule: profiles are PERSONAL/CONFIGURATION, not PROJECT.**
 
 ---
 
