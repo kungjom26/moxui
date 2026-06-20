@@ -1,0 +1,127 @@
+[package]
+name = "moxui"
+version = "0.1.0-alpha"
+edition = "2021"
+rust-version = "1.78"
+license = "MIT"
+authors = ["kungjom26"]
+description = "Modern, secure Rust-based web UI for Proxmox VE"
+homepage = "https://github.com/kungjom26/moxui"
+repository = "https://github.com/kungjom26/moxui"
+readme = "README.md"
+keywords = ["proxmox", "hypervisor", "kvm", "ui", "rust"]
+categories = ["api-bindings", "virtualization", "web-programming"]
+
+[lib]
+name = "moxui"
+path = "src/lib.rs"
+
+[[bin]]
+name = "moxui"
+path = "src/main.rs"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Web framework
+axum = "0.7"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "trace", "compression-gzip", "set-header"] }
+
+# HTTP client (Proxmox)
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+
+# Database
+rusqlite = { version = "0.31", features = ["bundled"] }
+r2d2 = "0.8"
+r2d2_sqlite = "0.24"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Auth
+jsonwebtoken = "9"
+bcrypt = "0.15"
+
+# TLS / Crypto
+rustls = "0.23"
+rustls-pemfile = "2"
+chacha20poly1305 = "0.10"
+age = "0.11"
+
+# Cache
+moka = { version = "0.12", features = ["future"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Metrics
+prometheus = "0.13"
+
+# Config
+figment = { version = "0.10", features = ["env", "toml", "yaml"] }
+
+# Utilities
+anyhow = "1"
+thiserror = "1"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+url = "2"
+dotenvy = "0.15"
+
+# CLI
+clap = { version = "4", features = ["derive", "env"] }
+
+# Embedded UI
+rust-embed = "8"
+mime_guess = "2"
+
+# WebSocket + VNC proxy
+tokio-tungstenite = "0.21"
+futures-util = "0.3"
+
+# Rate limiting
+tower_governor = "0.8"
+
+[dev-dependencies]
+tokio-test = "0.4"
+wiremock = "0.6"
+mockall = "0.13"
+criterion = { version = "0.5", features = ["html_reports"] }
+tempfile = "3"
+fake = { version = "2", features = ["derive"] }
+proptest = "1"
+serde_json = "1"
+
+# Lint configuration
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+
+# Profile configuration
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[profile.dev]
+opt-level = 0
+debug = true
+incremental = true
+
+[profile.ci]
+inherits = "dev"
+incremental = false

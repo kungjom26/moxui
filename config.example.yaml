@@ -1,0 +1,37 @@
+# MoxUI configuration file
+#
+# Copy to config.yaml (NOT committed) and edit
+# All settings can be overridden via MOXUI_* environment variables
+
+server:
+  bind: "0.0.0.0:8080"
+  workers: 0  # 0 = num CPUs
+
+database:
+  path: "/home/moxui/data/moxui.db"
+  max_connections: 8
+  run_migrations: true
+
+logging:
+  level: "info"      # trace|debug|info|warn|error
+  format: "pretty"    # pretty|json
+
+# Proxmox clusters to connect to
+clusters:
+  - name: "homelab"
+    url: "https://192.168.1.11:8006"
+    username: "root@pam"
+    password: "${MOXUI_PROXMOX_HOMELAB_PASSWORD}"
+    realm: "pam"            # pam|pve|openid
+    insecure_skip_verify: true   # true for self-signed certs
+    # ca_cert_pem: |
+    #   -----BEGIN CERTIFICATE-----
+    #   ... (alternative to insecure_skip_verify)
+    #   -----END CERTIFICATE-----
+
+  - name: "production"
+    url: "https://pve.example.com:8006"
+    username: "proxui@pve"
+    password: "${MOXUI_PROXMOX_PROD_PASSWORD}"
+    realm: "pve"
+    insecure_skip_verify: false
