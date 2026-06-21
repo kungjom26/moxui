@@ -45,6 +45,10 @@ serde_json = "1"
 jsonwebtoken = "9"
 bcrypt = "0.15"
 
+# Secret management (security: protect credentials in memory)
+secrecy = { version = "0.10", features = ["serde"] }
+zeroize = { version = "1", features = ["derive"] }
+
 # TLS / Crypto (rustls is required for rustls-pki-types via reqwest/rustls)
 # Note: rustls-pemfile (unmaintained per RUSTSEC-2025-0134) deliberately omitted —
 # when needed, use rustls-pki-types (1.9+) which has the same PEM parsing built in.

@@ -73,13 +73,14 @@ impl ProxmoxClient {
 
     /// Login to Proxmox and get a ticket.
     pub async fn login(&self) -> AppResult<()> {
+        use secrecy::ExposeSecret;
         let url = format!("{}/api2/json/access/ticket", self.config.url);
         let resp = self
             .http
             .post(&url)
             .json(&serde_json::json!({
                 "username": &self.config.username,
-                "password": &self.config.password,
+                "password": self.config.password.expose_secret(),
             }))
             .send()
             .await?;
@@ -132,6 +133,66 @@ impl ProxmoxClient {
         &self.http
     }
 
+    /// Issue an authenticated GET to a Proxmox API endpoint and decode the JSON
+    /// `data` field into the requested type.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` — path under `/api2/json/...` (e.g., `"/version"` or
+    ///   `"/nodes/pve11/status"`). Leading `/` is optional.
+    ///
+    /// # Type bounds
+    ///
+    /// `T` must implement `serde::de::DeserializeOwned` (owns its data, no
+    /// lifetimes). This is satisfied by all `proxmox::types::*` structs and
+    /// any other DTO deserialized from Proxmox JSON.
+    ///
+    /// # Errors
+    ///
+    /// * `AppError::Proxmox` on HTTP / non-2xx / JSON-decode failures
+    /// * `AppError::Internal` if login succeeded but no ticket was stored
+    pub async fn get<T>(&self, path: &str) -> AppResult<T>
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        let ticket = self.current_ticket().await?;
+        let url = self.build_url(path);
+        let resp = self
+            .http
+            .get(&url)
+            .header("Cookie", format!("PVEAuthCookie={}", ticket.ticket))
+            .send()
+            .await?;
+        self.handle_response::<T>(resp).await
+    }
+
+    /// Build a full URL from a relative API path.
+    fn build_url(&self, path: &str) -> String {
+        let path = path.trim_start_matches('/');
+        format!(
+            "{}/api2/json/{}",
+            self.config.url.trim_end_matches('/'),
+            path
+        )
+    }
+
+    /// Decode a response, recording success/failure on the circuit breaker.
+    async fn handle_response<T>(&self, resp: reqwest::Response) -> AppResult<T>
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        if !resp.status().is_success() {
+            self.circuit_breaker.record_failure();
+            return Err(AppError::Proxmox(format!(
+                "GET failed with status {}",
+                resp.status()
+            )));
+        }
+        let body: crate::proxmox::types::ApiResponse<T> = resp.json().await?;
+        self.circuit_breaker.record_success();
+        Ok(body.data)
+    }
+
     /// Record success (reset circuit breaker).
     pub fn record_success(&self) {
         self.circuit_breaker.record_success();
@@ -152,7 +213,7 @@ mod tests {
             name: "test".to_string(),
             url: "https://test.local:8006".to_string(),
             username: "root@pam".to_string(),
-            password: "test".to_string(),
+            password: secrecy::SecretString::new("test".to_string().into_boxed_str()),
             realm: "pam".to_string(),
             insecure_skip_verify: true,
             ca_cert_pem: None,
@@ -173,5 +234,89 @@ mod tests {
         let client = rt.block_on(ProxmoxClient::new(config)).unwrap();
         assert_eq!(client.name(), "test");
         assert_eq!(client.url(), "https://test.local:8006");
+    }
+
+    #[test]
+    fn test_build_url_normalizes_paths() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let config = test_cluster_config();
+        let client = rt.block_on(ProxmoxClient::new(config)).unwrap();
+        // No leading slash, no trailing slash on base
+        assert_eq!(
+            client.build_url("version"),
+            "https://test.local:8006/api2/json/version"
+        );
+        // Leading slash gets trimmed
+        assert_eq!(
+            client.build_url("/version"),
+            "https://test.local:8006/api2/json/version"
+        );
+        // Nested path
+        assert_eq!(
+            client.build_url("nodes/pve11/status"),
+            "https://test.local:8006/api2/json/nodes/pve11/status"
+        );
+    }
+
+    /// End-to-end: mock a Proxmox `/access/ticket` POST and a `/version` GET
+    /// and verify the client can log in, cache the ticket, and use it on the
+    /// follow-up authenticated call.
+    #[tokio::test]
+    async fn test_login_and_get_against_wiremock() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+
+        // Mock /access/ticket (login) — returns a fake ticket.
+        // Body shape matches our `Ticket` struct: ticket, csrf_token, username, expires_at.
+        // We don't match the request body — reqwest serializes the login JSON
+        // body so `body_string("")` won't match. Path + method is enough for
+        // the mock to fire.
+        Mock::given(method("POST"))
+            .and(path("/api2/json/access/ticket"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": {
+                    "ticket": "PVE:root@pam:deadbeef::SIG",
+                    "csrf_token": "csrf-token-abc",
+                    "username": "root@pam",
+                    "expires_at": 9_999_999_999_i64
+                }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        // Mock /version — expects the cookie from login
+        Mock::given(method("GET"))
+            .and(path("/api2/json/version"))
+            .and(header("Cookie", "PVEAuthCookie=PVE:root@pam:deadbeef::SIG"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": {
+                    "version": "8.2.4",
+                    "release": "8.2",
+                    "repoid": "deadbeef"
+                }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        // Build a client pointing at the mock server
+        let config = ClusterConfig {
+            name: "mock".to_string(),
+            url: server.uri(),
+            username: "root@pam".to_string(),
+            password: secrecy::SecretString::new("test-pw".to_string().into_boxed_str()),
+            realm: "pam".to_string(),
+            insecure_skip_verify: true,
+            ca_cert_pem: None,
+        };
+        let client = ProxmoxClient::new(config).await.unwrap();
+
+        // GET should trigger login first, then return the version
+        let v: crate::proxmox::types::Version = client.get("version").await.unwrap();
+        assert_eq!(v.version, "8.2.4");
+        assert_eq!(v.release, "8.2");
     }
 }

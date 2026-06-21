@@ -7,6 +7,7 @@ use std::process::ExitCode;
 use clap::Parser;
 
 use moxui::config::Config;
+use moxui::proxmox::ProxmoxClient;
 use moxui::state::AppState;
 
 #[derive(Parser, Debug)]
@@ -69,8 +70,30 @@ async fn main() -> ExitCode {
         "Configuration loaded"
     );
 
+    // Create Proxmox clients (one per cluster) and audit insecure mode
+    let mut clients = Vec::with_capacity(config.clusters.len());
+    for cluster in &config.clusters {
+        // C3 fix: audit log whenever insecure TLS is enabled. Production
+        // should always use `ca_cert_pem` and `insecure_skip_verify: false`.
+        if cluster.insecure_skip_verify {
+            tracing::warn!(
+                cluster = %cluster.name,
+                "cluster has insecure_skip_verify=true — TLS validation disabled. \
+                 Use ca_cert_pem in production."
+            );
+        }
+        match ProxmoxClient::new(cluster.clone()).await {
+            Ok(c) => clients.push(c),
+            Err(e) => {
+                tracing::error!(cluster = %cluster.name, error = %e, "Failed to build Proxmox client");
+                return ExitCode::from(1);
+            }
+        }
+    }
+    tracing::info!(count = clients.len(), "Proxmox clients built");
+
     // Create application state
-    let state = AppState::new(config.clone());
+    let state = AppState::new(config.clone(), clients);
 
     // Build router
     let app = moxui::api::router(state);
