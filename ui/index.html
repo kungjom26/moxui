@@ -206,11 +206,178 @@
             </table>
         </section>
 
-        <!-- VM detail (placeholder for Day 12). -->
+        <!-- VM detail (Day 12 — tabs + actions + confirm dialog). -->
         <section x-show="route === 'vm-detail' && selectedVm">
-            <h2>VM <span x-text="selectedVm?.vmid + ' — ' + (selectedVm?.name || '(unnamed)')"></span></h2>
-            <p class="muted">Detail view is coming in Day 12. (cluster=<span x-text="selectedVm?.cluster"></span>, node=<span x-text="selectedVm?.node"></span>, status=<span x-text="selectedVm?.status"></span>)</p>
-            <button @click="route = 'vms'">← Back to list</button>
+            <header class="section-head">
+                <h2>
+                    VM <span x-text="selectedVm?.vmid"></span>
+                    —
+                    <span x-text="selectedVm?.name || '(unnamed)'"></span>
+                    <span class="badge" :class="'badge-' + (selectedVm?.status || 'unknown')"
+                          x-text="selectedVm?.status"></span>
+                </h2>
+                <div class="meta">
+                    <span class="muted"
+                          x-text="(selectedVm?.cluster || '') + ' / ' + (selectedVm?.node || '')"></span>
+                    <button class="link" @click="fetchVmDetail()" title="Refresh now">↻</button>
+                </div>
+            </header>
+
+            <!-- Action toolbar: Start/Stop/Shutdown/Reboot/Delete.
+                 Buttons disable when the action would be a no-op (Start on a
+                 running VM, Stop on a stopped VM, etc.) or when no VM is
+                 selected. Destructive actions (Delete) open a confirm dialog
+                 requiring the operator to type the VMID before they enable. -->
+            <div class="toolbar">
+                <button @click="requestVmAction('start')"   :disabled="!canStart()"
+                        :class="{ muted: !canStart() }">▶ Start</button>
+                <button @click="requestVmAction('shutdown')" :disabled="!canShutdown()"
+                        :class="{ muted: !canShutdown() }">⏻ Shutdown</button>
+                <button @click="requestVmAction('stop')"    :disabled="!canStop()"
+                        :class="{ muted: !canStop() }">■ Stop</button>
+                <button @click="requestVmAction('reboot')"  :disabled="!canReboot()"
+                        :class="{ muted: !canReboot() }">↻ Reboot</button>
+                <span class="spacer" style="flex:1"></span>
+                <button class="danger" @click="requestVmAction('delete', { body: { purge: true, force: false, skiplock: false } })"
+                        :disabled="!canDelete()">🗑 Delete</button>
+                <button class="link" @click="location.hash = '#/vms'; route = 'vms'">← Back to list</button>
+            </div>
+
+            <p class="error" x-show="vmActionError" x-text="vmActionError"></p>
+            <p class="error" x-show="vmDetailError" x-text="vmDetailError?.message"></p>
+
+            <!-- Tab navigation. -->
+            <nav class="tabs">
+                <button :class="{ active: vmDetailTab === 'overview' }"
+                        @click="switchVmTab('overview')">Overview</button>
+                <button :class="{ active: vmDetailTab === 'config' }"
+                        @click="switchVmTab('config')">Config</button>
+                <button :class="{ active: vmDetailTab === 'tasks' }"
+                        @click="switchVmTab('tasks')">
+                    Tasks
+                    <span class="badge badge-running" x-show="vmActionPending">1</span>
+                </button>
+            </nav>
+
+            <!-- Overview tab: live status + at-a-glance metrics. -->
+            <div x-show="vmDetailTab === 'overview'">
+                <table class="grid">
+                    <tbody>
+                        <tr><th>VMID</th><td x-text="selectedVm?.vmid"></td></tr>
+                        <tr><th>Name</th><td x-text="selectedVm?.name || '(unnamed)'"></td></tr>
+                        <tr><th>Cluster</th><td x-text="selectedVm?.cluster"></td></tr>
+                        <tr><th>Node</th><td x-text="selectedVm?.node"></td></tr>
+                        <tr><th>Status</th><td>
+                            <span class="badge" :class="'badge-' + selectedVm?.status"
+                                  x-text="selectedVm?.status"></span>
+                        </td></tr>
+                        <tr><th>CPU</th><td x-text="pct(selectedVm?.cpu)"></td></tr>
+                        <tr><th>Memory</th><td x-text="selectedVm?.mem != null ? humanBytes(selectedVm.mem) + ' / ' + humanBytes(selectedVm.maxmem) : '—'"></td></tr>
+                        <tr><th>Uptime</th><td x-text="uptimeHuman(selectedVm?.uptime)"></td></tr>
+                        <tr><th>Tags</th><td x-text="selectedVm?.tags || '—'"></td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Config tab: full Proxmox VM spec. -->
+            <div x-show="vmDetailTab === 'config'">
+                <p class="muted" x-show="vmConfigLoading">Loading config…</p>
+                <p class="muted" x-show="!vmConfigLoading && !vmConfig">No config available.</p>
+                <table class="grid" x-show="vmConfig">
+                    <tbody>
+                        <tr><th>Name</th><td x-text="vmConfig?.name || '—'"></td></tr>
+                        <tr><th>Description</th><td x-text="vmConfig?.description || '—'"></td></tr>
+                        <tr><th>Cores</th><td x-text="vmConfig?.cores"></td></tr>
+                        <tr><th>Sockets</th><td x-text="vmConfig?.sockets"></td></tr>
+                        <tr><th>Memory</th><td x-text="humanMemoryMiB(vmConfig?.memory)"></td></tr>
+                        <tr><th>Boot</th><td x-text="vmConfig?.boot || '—'"></td></tr>
+                        <tr><th>BIOS</th><td x-text="vmConfig?.bios || '—'"></td></tr>
+                        <tr><th>SCSI HW</th><td x-text="vmConfig?.scsihw || '—'"></td></tr>
+                        <tr><th>CPU type</th><td x-text="vmConfig?.cpu || '—'"></td></tr>
+                        <tr><th>Tags</th><td x-text="vmConfig?.tags || '—'"></td></tr>
+                        <tr><th>On boot</th><td x-text="vmConfig?.onboot == 1 ? 'yes' : 'no'"></td></tr>
+                        <tr><th>Agent</th><td x-text="vmConfig?.agent == 1 ? 'yes' : 'no'"></td></tr>
+                        <tr><th>Template</th><td x-text="vmConfig?.template == 1 ? 'yes' : 'no'"></td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Tasks tab: most recent action UPIDs. -->
+            <div x-show="vmDetailTab === 'tasks'">
+                <p class="muted" x-show="vmTasksLoading">Loading…</p>
+                <p class="muted" x-show="!vmTasksLoading && vmTasks.length === 0">
+                    No tasks yet. Actions you fire (Start/Stop/...) will appear here.
+                </p>
+                <table class="grid" x-show="vmTasks.length > 0">
+                    <thead>
+                        <tr><th>UPID</th><th>Type</th><th>Status</th><th>Started</th></tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="t in vmTasks" :key="t.upid">
+                            <tr>
+                                <td class="num" x-text="t.upid"></td>
+                                <td x-text="t.type || '—'"></td>
+                                <td>
+                                    <span class="badge"
+                                          :class="'badge-' + (t.status === 'stopped' ? 'running' : t.status)"
+                                          x-text="t.status"></span>
+                                    <span class="muted" x-show="t.exitstatus"
+                                          x-text="' (' + t.exitstatus + ')'"></span>
+                                </td>
+                                <td x-text="t.starttime ? new Date(t.starttime * 1000).toLocaleString() : '—'"></td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Confirm dialog overlay.
+                 - For state-changing actions (Start/Stop/Shutdown/Reboot): single click.
+                 - For Delete (destructive): operator must type the VMID; button
+                   stays disabled until input matches vmConfirm.vmid. -->
+            <div class="dialog-backdrop" x-show="vmConfirm" @click.self="cancelVmAction()">
+                <div class="dialog" :class="{ danger: vmConfirm?.danger }">
+                    <header>
+                        <h3>
+                            <span x-text="vmConfirm?.action === 'delete' ? '🗑 Delete VM?' : 'Confirm action'"></span>
+                        </h3>
+                        <button class="link dialog-x" @click="cancelVmAction()" title="Cancel (Esc)">×</button>
+                    </header>
+                    <p>
+                        <span x-show="vmConfirm?.action === 'delete'">
+                            This will <strong>destroy</strong> VM
+                            <strong x-text="vmConfirm?.vmid"></strong>
+                            (<span x-text="vmConfirm?.vname"></span>) and
+                            <strong>purge</strong> its disks from
+                            <span x-text="selectedVm?.node"></span>.<br>
+                            Type the VMID (<code x-text="vmConfirm?.vmid"></code>) to confirm:
+                        </span>
+                        <span x-show="vmConfirm?.action !== 'delete'">
+                            <span x-text="vmConfirm?.action"></span> VM
+                            <strong x-text="vmConfirm?.vmid"></strong>
+                            (<span x-text="vmConfirm?.vname"></span>)?
+                        </span>
+                    </p>
+                    <input x-show="vmConfirm?.needsVmid"
+                           x-model="vmConfirmInput"
+                           placeholder="Type VMID to confirm"
+                           autofocus />
+                    <p class="error" x-show="vmActionError" x-text="vmActionError"></p>
+                    <footer>
+                        <button class="link" @click="cancelVmAction()">Cancel</button>
+                        <button class="danger"
+                                x-show="vmConfirm?.danger"
+                                :disabled="vmConfirmInput != String(vmConfirm?.vmid)"
+                                @click="confirmVmAction()">
+                            Delete forever
+                        </button>
+                        <button x-show="!vmConfirm?.danger"
+                                @click="confirmVmAction()">
+                            Confirm
+                        </button>
+                    </footer>
+                </div>
+            </div>
         </section>
     </main>
 

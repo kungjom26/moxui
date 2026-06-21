@@ -10,6 +10,7 @@
 // 11+ adds proper VM detail routes (`#/vms/<cluster>/<vmid>`).
 
 const VM_POLL_MS = 2000;          // poll VM list every 2s while view is active
+const VM_DETAIL_POLL_MS = 2000;   // poll VM detail (Overview) every 2s
 const VM_STALE_MS = 5000;         // mark data stale after 5s of no fresh fetch
 const VM_RETRY_DELAYS = [2000, 4000, 8000, 15000, 30000]; // exponential backoff cap
 
@@ -37,6 +38,21 @@ function moxui() {
         storages: null,
         networks: null,
         selectedVm: null,
+
+        // --- VM detail page state ---
+        vmDetailTab: 'overview',   // 'overview' | 'config' | 'tasks'
+        vmConfig: null,            // VmConfig from /api/v1/vms/.../config
+        vmConfigLoading: false,
+        vmTasks: [],               // [{ upid, status, type, starttime, endtime }]
+        vmTasksLoading: false,
+        vmDetailError: null,
+        vmDetailPollHandle: null,
+        // Active action (Start/Stop/...) we fired and are tracking via /api/v1/tasks/...
+        vmActionPending: null,      // { upid, action, startedAt } | null
+        // Confirm dialog state for destructive / state-changing actions.
+        vmConfirm: null,           // { action, vmid, vname, body, needsVmid, danger } | null
+        vmConfirmInput: '',        // user-typed VMID (for delete confirmation)
+        vmActionError: null,       // last action error (rendered as inline banner)
 
         // --- VM list UI state ---
         vmFilter: {
@@ -101,41 +117,57 @@ function moxui() {
         },
 
         parseVmDetail() {
-            // hash like "#/vm/<cluster>/<vmid>" → { cluster, vmid }
-            const m = location.hash.match(/^#\/vm\/([^/]+)\/(\d+)/);
-            return m ? { cluster: m[1], vmid: Number(m[2]) } : null;
+            // Hash like "#/vm/<cluster>/<node>/<vmid>" → { cluster, node, vmid }.
+            // Falls back to the cached list to find node if the URL didn't carry it
+            // (e.g. legacy links from before Day 12).
+            const m = location.hash.match(/^#\/vm\/([^/]+)\/(?:([^/]+)\/)?(\d+)/);
+            if (!m) return null;
+            const cluster = m[1];
+            const vmid = Number(m[3]);
+            let node = m[2] || null;
+            if (!node) {
+                const cached = (this.vms || []).find(v => v.cluster === cluster && v.vmid === vmid);
+                node = cached ? cached.node : null;
+            }
+            return node ? { cluster, node, vmid } : null;
         },
 
         maybeLoadRoute() {
             if (!this.token) return;
             switch (this.route) {
                 case 'vms':
+                    this.stopVmDetailPolling();
                     this.startVmPolling();
                     this.fetchVms();
                     break;
                 case 'lxcs':
                     this.stopVmPolling();
+                    this.stopVmDetailPolling();
                     this.fetchLxcs();
                     break;
                 case 'storages':
                     this.stopVmPolling();
+                    this.stopVmDetailPolling();
                     this.fetchStorages();
                     break;
                 case 'networks':
                     this.stopVmPolling();
+                    this.stopVmDetailPolling();
                     this.fetchNetworks();
                     break;
                 case 'vm-detail': {
                     this.stopVmPolling();
                     const sel = this.parseVmDetail();
                     if (sel) {
-                        this.selectedVm = { cluster: sel.cluster, vmid: sel.vmid };
+                        this.selectedVm = { cluster: sel.cluster, vmid: sel.vmid, node: sel.node };
                         // Try to populate from the cached list (we may have it).
                         const cached = (this.vms || []).find(v =>
                             v.cluster === sel.cluster && v.vmid === sel.vmid
                         );
                         if (cached) Object.assign(this.selectedVm, cached);
                     }
+                    this.fetchVmDetail();
+                    this.startVmDetailPolling();
                     break;
                 }
             }
@@ -174,6 +206,18 @@ function moxui() {
         async fetchMe() {
             const resp = await this.api('/api/v1/auth/me');
             this.user = await resp.json();
+        },
+
+        async api(path, init = {}) {
+            const headers = { ...(init.headers || {}) };
+            if (this.token) headers['Authorization'] = 'Bearer ' + this.token;
+            const resp = await fetch(path, { ...init, headers });
+            if (resp.status === 401) { this.logout(); throw new Error('unauthorized'); }
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                throw new Error(err.message || err.error || `${path} → HTTP ${resp.status}`);
+            }
+            return resp;
         },
 
         logout() {
@@ -260,6 +304,183 @@ function moxui() {
                 clearInterval(this.vmPollHandle);
                 this.vmPollHandle = null;
             }
+        },
+
+        // ----- VM detail (Overview/Config/Tasks) -----
+
+        async fetchVmDetail() {
+            if (!this.selectedVm || !this.selectedVm.cluster || !this.selectedVm.node) {
+                return;
+            }
+            try {
+                const resp = await this.api(
+                    `/api/v1/vms/${this.selectedVm.cluster}/${this.selectedVm.vmid}`
+                );
+                Object.assign(this.selectedVm, await resp.json());
+                this.vmDetailError = null;
+            } catch (e) {
+                this.vmDetailError = { message: e.message || String(e) };
+            }
+        },
+
+        async fetchVmConfig() {
+            if (!this.selectedVm || !this.selectedVm.node) return;
+            this.vmConfigLoading = true;
+            try {
+                const resp = await this.api(
+                    `/api/v1/vms/${this.selectedVm.cluster}/${this.selectedVm.node}/${this.selectedVm.vmid}/config`
+                );
+                this.vmConfig = await resp.json();
+            } catch (e) {
+                this.vmConfig = null;
+                this.vmDetailError = { message: `config: ${e.message || e}` };
+            } finally {
+                this.vmConfigLoading = false;
+            }
+        },
+
+        startVmDetailPolling() {
+            this.stopVmDetailPolling();
+            this.vmDetailPollHandle = setInterval(() => this.fetchVmDetail(), VM_DETAIL_POLL_MS);
+        },
+
+        stopVmDetailPolling() {
+            if (this.vmDetailPollHandle) {
+                clearInterval(this.vmDetailPollHandle);
+                this.vmDetailPollHandle = null;
+            }
+        },
+
+        switchVmTab(tab) {
+            this.vmDetailTab = tab;
+            this.vmDetailError = null;
+            if (tab === 'config' && !this.vmConfig) {
+                this.fetchVmConfig();
+            }
+            if (tab === 'tasks') {
+                this.fetchVmTask();
+            }
+        },
+
+        async fetchVmTask() {
+            if (!this.vmActionPending || !this.selectedVm) return;
+            this.vmTasksLoading = true;
+            try {
+                const upid = encodeURIComponent(this.vmActionPending.upid);
+                const resp = await this.api(
+                    `/api/v1/tasks/${this.selectedVm.cluster}/${this.selectedVm.node}/${upid}`
+                );
+                const task = await resp.json();
+                // Replace or insert into vmTasks list.
+                const idx = this.vmTasks.findIndex(t => t.upid === task.upid);
+                if (idx >= 0) this.vmTasks.splice(idx, 1, task);
+                else this.vmTasks.unshift(task);
+                // Clear pending once the task is no longer running.
+                if (task.status !== 'running') {
+                    this.vmActionPending = null;
+                }
+            } catch (e) {
+                this.vmActionError = e.message || String(e);
+            } finally {
+                this.vmTasksLoading = false;
+            }
+        },
+
+        // ----- VM actions (start/stop/shutdown/reboot/delete) -----
+
+        requestVmAction(action, opts = {}) {
+            // Open a confirm dialog. Destructive actions (delete) require
+            // the operator to type the VMID before the button enables.
+            const danger = (action === 'delete');
+            this.vmActionError = null;
+            this.vmConfirmInput = '';
+            this.vmConfirm = {
+                action,
+                vmid: this.selectedVm.vmid,
+                vname: this.selectedVm.name || `(vmid ${this.selectedVm.vmid})`,
+                body: opts.body || null,           // for delete: { purge, force, skiplock }
+                needsVmid: danger,
+                danger,
+            };
+        },
+
+        cancelVmAction() {
+            this.vmConfirm = null;
+            this.vmConfirmInput = '';
+        },
+
+        async confirmVmAction() {
+            if (!this.vmConfirm) return;
+            const { action, body } = this.vmConfirm;
+            const { cluster, node, vmid } = this.selectedVm;
+            this.vmActionError = null;
+            try {
+                const url = `/api/v1/vms/${cluster}/${node}/${vmid}/${action}`;
+                const init = {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: body ? JSON.stringify(body) : null,
+                };
+                const resp = await this.api(url, init);
+                const data = await resp.json();
+                this.vmConfirm = null;
+                this.vmConfirmInput = '';
+                if (data.upid) {
+                    this.vmActionPending = {
+                        upid: data.upid,
+                        action,
+                        startedAt: Date.now(),
+                    };
+                    // Refresh detail immediately so the user sees the
+                    // status change, then poll the task to track completion.
+                    this.fetchVmDetail();
+                    this.fetchVmTask();
+                    if (this.vmDetailTab !== 'tasks') {
+                        // Stay on current tab but make the banner visible.
+                    }
+                    if (action === 'delete') {
+                        // After delete the VM is gone — bounce back to list.
+                        setTimeout(() => {
+                            location.hash = '#/vms';
+                            this.route = 'vms';
+                            this.fetchVms();
+                        }, 1500);
+                    }
+                } else {
+                    // No UPID returned (unexpected) — still refresh.
+                    this.fetchVmDetail();
+                }
+            } catch (e) {
+                this.vmActionError = e.message || String(e);
+                // Keep the dialog open so the user can retry or cancel.
+            }
+        },
+
+        // Per-action button state — disable when the action would be a no-op
+        // (Start on a running VM, Stop on a stopped VM, etc.).
+        canStart() { return this.selectedVm && this.selectedVm.status !== 'running'; },
+        canStop()  { return this.selectedVm && (this.selectedVm.status === 'running' || this.selectedVm.status === 'paused'); },
+        canShutdown() { return this.selectedVm && (this.selectedVm.status === 'running' || this.selectedVm.status === 'paused'); },
+        canReboot()   { return this.selectedVm && this.selectedVm.status === 'running'; },
+        canDelete()   { return this.selectedVm != null; },
+
+        // ----- UI helpers -----
+
+        openVm(vm) {
+            this.selectedVm = vm;
+            this.route = 'vm-detail';
+            this.vmDetailTab = 'overview';
+            this.vmConfig = null;
+            this.vmTasks = [];
+            this.vmActionPending = null;
+            this.vmActionError = null;
+            location.hash = `#/vm/${vm.cluster}/${vm.node}/${vm.vmid}`;
+        },
+
+        humanMemoryMiB(mib) {
+            if (mib == null) return '—';
+            if (mib >= 1024) return (mib / 1024).toFixed(1) + ' GB';
+            return mib + ' MiB';
         },
 
         // ----- VM list: filter / sort / derived state -----

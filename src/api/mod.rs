@@ -5,6 +5,7 @@ pub mod health;
 pub mod lxcs;
 pub mod networks;
 pub mod storages;
+pub mod tasks;
 pub mod vms;
 
 use axum::{
@@ -58,6 +59,14 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v1/networks/:cluster/:node",
             get(networks::node_networks),
+        )
+        .route(
+            "/api/v1/vms/:cluster/:node/:vmid/config",
+            get(vms::vm_config_handler),
+        )
+        .route(
+            "/api/v1/tasks/:cluster/:node/:upid",
+            get(tasks::task_status),
         )
         .route_layer(from_fn_with_state(state.clone(), require_auth));
 

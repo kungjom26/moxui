@@ -125,6 +125,25 @@ pub async fn vm_detail(
     Ok(Json(row))
 }
 
+/// `GET /api/v1/vms/:cluster/:node/:vmid/config` — full VM configuration.
+///
+/// Distinct from `vm_detail` which returns live status from
+/// `/cluster/resources?type=vm`. This endpoint calls
+/// `/nodes/{node}/qemu/{vmid}/config` and returns the editable spec
+/// (cores, memory, disks, boot order, …). The UI surfaces it in the
+/// Config tab of the VM detail view.
+pub async fn vm_config_handler(
+    State(state): State<AppState>,
+    Path((cluster, node, vmid)): Path<(String, String, u32)>,
+) -> AppResult<Json<crate::proxmox::types::VmConfig>> {
+    let client = state
+        .client(&cluster)
+        .ok_or_else(|| AppError::NotFound(format!("cluster '{cluster}' not configured")))?;
+
+    let config = client.vm_config(&node, vmid).await?;
+    Ok(Json(config))
+}
+
 /// Response from a state-changing VM action (start/stop/etc.).
 #[derive(Debug, Clone, Serialize)]
 pub struct VmActionResponse {
@@ -516,5 +535,222 @@ mod list_vms_contract_tests {
             has_lxc,
             "LXC 201 should also be in response (list_vms is unfiltered)"
         );
+    }
+}
+
+// =====================================================================
+// Day 12 — VM config endpoint tests (Overview/Config tab of detail view).
+// =====================================================================
+
+#[cfg(test)]
+mod vm_config_contract_tests {
+    //! Contract tests for `GET /api/v1/vms/:cluster/:node/:vmid/config`.
+    //!
+    //! Verifies the wire shape returned by the backend matches what
+    //! the Alpine frontend's Config tab expects in
+    //! `ui/static/app.js` + `ui/index.html`:
+    //!   - top-level `VmConfig` shape (name, cores, memory, bios, …)
+    //!   - auth required (401 without Bearer)
+    //!   - 404 when the cluster is not configured
+    //!
+    //! The mock Proxmox server returns a single config for VMID 103
+    //! with the fields the operator UI cares about; other fields are
+    //! silently dropped (serde default behavior).
+
+    use axum::body::{to_bytes, Body};
+    use axum::http::{Request, StatusCode};
+    use secrecy::SecretString;
+    use tower::ServiceExt;
+
+    use crate::audit::AuditStore;
+    use crate::auth::{Claims, JwtService, UserStore};
+    use crate::config::{
+        AuthConfig, ClusterConfig, Config, DatabaseConfig, LoggingConfig, ServerConfig,
+    };
+    use crate::proxmox::ProxmoxClient;
+    use crate::state::AppState;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn operator_token(jwt: &std::sync::Arc<JwtService>) -> String {
+        let now = chrono::Utc::now().timestamp();
+        let claims = Claims {
+            sub: "u-test".to_string(),
+            username: "tester".to_string(),
+            role: "operator".to_string(),
+            iat: now,
+            exp: now + 600,
+        };
+        jwt.encode(&claims).expect("encode token")
+    }
+
+    fn authed_get(uri: &str, token: &str) -> Request<Body> {
+        Request::builder()
+            .uri(uri)
+            .header(axum::http::header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap()
+    }
+
+    async fn setup_app() -> (wiremock::MockServer, axum::Router) {
+        let server = MockServer::start().await;
+
+        // /access/ticket — login.
+        Mock::given(method("POST"))
+            .and(path("/api2/json/access/ticket"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": {
+                    "ticket": "PVE:root@pam:testticket::SIG",
+                    "csrf_token": "test-csrf",
+                    "username": "root@pam",
+                    "expires_at": 9_999_999_999_i64
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        // /nodes/pve11/qemu/103/config — VM 103 spec.
+        Mock::given(method("GET"))
+            .and(path("/api2/json/nodes/pve11/qemu/103/config"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": {
+                    "name": "web-1",
+                    "description": "Primary web frontend",
+                    "cores": 4,
+                    "sockets": 1,
+                    "memory": 4096,
+                    "balloon": 0,
+                    "boot": "order=scsi0",
+                    "bios": "ovmf",
+                    "machine": "pc-q35-8.1",
+                    "scsihw": "virtio-scsi-pci",
+                    "cpu": "host",
+                    "tags": "prod;web",
+                    "template": 0,
+                    "onboot": 1,
+                    "agent": 1
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let config = ClusterConfig {
+            name: "homelab".to_string(),
+            url: server.uri(),
+            username: "root@pam".to_string(),
+            password: SecretString::new("test-pw".to_string().into_boxed_str()),
+            realm: "pam".to_string(),
+            insecure_skip_verify: true,
+            ca_cert_pem: None,
+        };
+        let client = ProxmoxClient::new(config).await.unwrap();
+        let audit = std::sync::Arc::new(AuditStore::open_in_memory().unwrap());
+        let app_cfg = Config {
+            server: ServerConfig {
+                bind: "127.0.0.1:0".to_string(),
+                workers: 0,
+                tls: None,
+            },
+            database: DatabaseConfig {
+                path: ":memory:".to_string(),
+                max_connections: 1,
+                run_migrations: false,
+            },
+            logging: LoggingConfig {
+                level: "info".to_string(),
+                format: "pretty".to_string(),
+            },
+            clusters: vec![],
+            auth: AuthConfig::default(),
+        };
+        let priv_pem = include_bytes!("../../tests/fixtures/test_jwt_priv.pem");
+        let pub_pem = include_bytes!("../../tests/fixtures/test_jwt_pub.pem");
+        let jwt = JwtService::new(priv_pem, pub_pem, "test", "test").expect("test jwt");
+        let state = AppState::new(app_cfg, vec![client], audit, jwt, UserStore::new());
+        let app = crate::api::router(state);
+        (server, app)
+    }
+
+    #[tokio::test]
+    async fn test_vm_config_requires_auth() {
+        let (_server, app) = setup_app().await;
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/vms/homelab/pve11/103/config")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_vm_config_response_matches_frontend_contract() {
+        // The Alpine frontend's Config tab reads these fields:
+        //   name, cores, sockets, memory, boot, bios, scsihw, cpu, tags,
+        //   description, onboot, agent, template
+        let (_server, app) = setup_app().await;
+        let priv_pem = include_bytes!("../../tests/fixtures/test_jwt_priv.pem");
+        let pub_pem = include_bytes!("../../tests/fixtures/test_jwt_pub.pem");
+        let jwt = JwtService::new(priv_pem, pub_pem, "test", "test").expect("test jwt");
+        let token = operator_token(&std::sync::Arc::new(jwt));
+
+        let resp = app
+            .oneshot(authed_get("/api/v1/vms/homelab/pve11/103/config", &token))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body_bytes = to_bytes(resp.into_body(), 16 * 1024).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+
+        // Required fields the frontend reads (some are Option<T>, so we
+        // assert they're present in the JSON shape rather than non-null —
+        // `null` is a legitimate value).
+        let required = [
+            "name",
+            "cores",
+            "sockets",
+            "memory",
+            "boot",
+            "bios",
+            "scsihw",
+            "cpu",
+            "tags",
+            "description",
+            "onboot",
+            "agent",
+            "template",
+        ];
+        for field in required {
+            assert!(body.get(field).is_some(), "config missing `{field}`");
+        }
+
+        // Spot-check concrete values.
+        assert_eq!(body["name"], "web-1");
+        assert_eq!(body["cores"], 4);
+        assert_eq!(body["memory"], 4096);
+        assert_eq!(body["bios"], "ovmf");
+        assert_eq!(body["tags"], "prod;web");
+        assert_eq!(body["template"], 0);
+    }
+
+    #[tokio::test]
+    async fn test_vm_config_returns_404_for_unknown_cluster() {
+        let (_server, app) = setup_app().await;
+        let priv_pem = include_bytes!("../../tests/fixtures/test_jwt_priv.pem");
+        let pub_pem = include_bytes!("../../tests/fixtures/test_jwt_pub.pem");
+        let jwt = JwtService::new(priv_pem, pub_pem, "test", "test").expect("test jwt");
+        let token = operator_token(&std::sync::Arc::new(jwt));
+
+        let resp = app
+            .oneshot(authed_get(
+                "/api/v1/vms/UNKNOWN-CLUSTER/pve11/103/config",
+                &token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 }

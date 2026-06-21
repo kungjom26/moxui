@@ -241,3 +241,80 @@ section h2 { margin-top: 0; }
 .grid th.num, .grid td.num { text-align: right; font-variant-numeric: tabular-nums; }
 
 .grid tr.stale td { opacity: 0.6; }
+
+/* --- Day 12 — VM detail enhancements --- */
+
+.tabs {
+    display: flex;
+    gap: 0.25rem;
+    border-bottom: 1px solid var(--border);
+    margin: 1rem 0 1rem 0;
+}
+.tabs button {
+    background: transparent;
+    color: var(--muted);
+    padding: 0.5rem 1rem;
+    border-radius: 6px 6px 0 0;
+    border-bottom: 2px solid transparent;
+    font-weight: 500;
+}
+.tabs button:hover { color: var(--fg); opacity: 1; }
+.tabs button.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+    background: var(--hover);
+}
+
+/* Buttons that would be a no-op get a muted style. */
+button.muted {
+    background: var(--hover);
+    color: var(--muted);
+}
+
+button.danger {
+    background: var(--error);
+    color: white;
+}
+button.danger:hover:not(:disabled) { opacity: 0.9; }
+
+/* Confirm dialog overlay. The backdrop is full-screen and click-to-dismiss;
+   the dialog itself catches clicks so they don't propagate. */
+.dialog-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+}
+.dialog {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.5rem;
+    width: 480px;
+    max-width: 90vw;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+}
+.dialog header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+}
+.dialog h3 { margin: 0; }
+.dialog .dialog-x { font-size: 1.5rem; line-height: 1; padding: 0 0.5rem; }
+.dialog input[type="text"] {
+    width: 100%;
+    margin: 0.75rem 0;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+.dialog footer {
+    display: flex;
+    gap: 0.5rem;
+    justify-content: flex-end;
+    margin-top: 1rem;
+}
+.dialog.danger { border-color: var(--error); }
+.dialog.danger h3 { color: var(--error); }

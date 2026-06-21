@@ -123,7 +123,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let ct = resp.headers().get(header::CONTENT_TYPE).unwrap();
         assert!(ct.to_str().unwrap().starts_with("text/html"));
-        let body = to_bytes(resp.into_body(), 16 * 1024).await.unwrap();
+        let body = to_bytes(resp.into_body(), 32 * 1024).await.unwrap();
         let s = std::str::from_utf8(&body).unwrap();
         assert!(s.contains("moxui"));
         assert!(s.contains("x-data=\"moxui()\"")); // Alpine root component

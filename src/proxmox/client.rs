@@ -308,6 +308,44 @@ impl ProxmoxClient {
         self.post_with_query(&path, params).await
     }
 
+    /// Read a QEMU VM's full configuration.
+    ///
+    /// Proxmox endpoint: `GET /nodes/{node}/qemu/{vmid}/config`.
+    /// Returns the editable spec (cores, memory, disks, NICs, boot
+    /// order, …) — distinct from `/cluster/resources?type=vm` which
+    /// returns live status (cpu%, mem used, uptime). Both are needed
+    /// for the Day 12 detail view (Overview = status, Config = spec).
+    pub async fn vm_config(
+        &self,
+        node: &str,
+        vmid: u32,
+    ) -> AppResult<crate::proxmox::types::VmConfig> {
+        let path = format!("nodes/{node}/qemu/{vmid}/config");
+        self.get(&path).await
+    }
+
+    /// Read a Proxmox task's status (used to track async actions).
+    ///
+    /// Proxmox endpoint: `GET /nodes/{node}/tasks/{upid}/status`.
+    /// The `upid` returned from start/stop/etc. is opaque — to poll
+    /// it we need the node (which is encoded inside the UPID as
+    /// `UPID:<node>:<pid>:...` but we take it as a parameter so the
+    /// caller can use the same node it used to fire the action).
+    pub async fn task_status(
+        &self,
+        node: &str,
+        upid: &str,
+    ) -> AppResult<crate::proxmox::types::TaskStatus> {
+        // UPIDs (`UPID:node:piddigit:starttime:type:id:user@realm`) are
+        // URL-path-safe — every byte is in the unreserved set per
+        // RFC 3986. We don't percent-encode because the URL crate's
+        // `form_urlencoded` helper operates on `application/x-www-form-
+        // urlencoded` body encoding (where `+` means space, etc.) and is
+        // not the right tool for path segments.
+        let path = format!("nodes/{node}/tasks/{upid}/status");
+        self.get(&path).await
+    }
+
     /// Record success (reset circuit breaker).
     pub fn record_success(&self) {
         self.circuit_breaker.record_success();

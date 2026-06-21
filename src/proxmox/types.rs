@@ -5,6 +5,94 @@
 
 use serde::{Deserialize, Serialize};
 
+/// QEMU VM configuration (from `/nodes/{node}/qemu/{vmid}/config`).
+///
+/// This is the editable VM spec — cores, memory, disks, NICs, boot
+/// order, etc. We only model the fields the operator UI surfaces;
+/// Proxmox returns many more (smbios, hookscript, audio, etc.) that
+/// we silently ignore via `#[serde(default)]`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VmConfig {
+    /// VM name (the `name` property in the config).
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Description / notes.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Allocated vCPU cores.
+    #[serde(default)]
+    pub cores: Option<u32>,
+    /// Allocated vCPU sockets.
+    #[serde(default)]
+    pub sockets: Option<u32>,
+    /// Configured memory in MiB (Proxmox uses MiB for memory fields).
+    #[serde(default)]
+    pub memory: Option<u64>,
+    /// Configured ballooning minimum in MiB (0 = disabled).
+    #[serde(default)]
+    pub balloon: Option<u64>,
+    /// Boot order (e.g. `order=scsi0;net0`).
+    #[serde(default)]
+    pub boot: Option<String>,
+    /// BIOS type (`seabios` or `ovmf`).
+    #[serde(default)]
+    pub bios: Option<String>,
+    /// Machine type (e.g. `pc-q35-8.1`).
+    #[serde(default)]
+    pub machine: Option<String>,
+    /// SCSI controller model (e.g. `virtio-scsi-pci`).
+    #[serde(default)]
+    pub scsihw: Option<String>,
+    /// CPU type (e.g. `host`, `kvm64`, `x86-64-v2-AES`).
+    #[serde(default)]
+    pub cpu: Option<String>,
+    /// Free-form tags (semicolon-separated).
+    #[serde(default)]
+    pub tags: Option<String>,
+    /// Whether the VM is a template (`1` = yes).
+    #[serde(default)]
+    pub template: Option<u8>,
+    /// Onboot flag (`1` = start with host).
+    #[serde(default)]
+    pub onboot: Option<u8>,
+    /// Agent flag (`1` = QEMU guest agent enabled).
+    #[serde(default)]
+    pub agent: Option<u8>,
+}
+
+/// Proxmox async task status (from `/nodes/{node}/tasks/{upid}/status`).
+///
+/// Tasks are how Proxmox reports state-changing operations (clone,
+/// migrate, snapshot, backup, …). A `start`/`stop`/etc. on a VM
+/// returns an `UPID` immediately; the actual work runs async and
+/// callers poll this endpoint to know when it finishes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskStatus {
+    /// Unique task ID (the same UPID returned by the action).
+    pub upid: String,
+    /// Node that owns the task (from the URL, not the UPID).
+    #[serde(default)]
+    pub node: Option<String>,
+    /// Task status: `running`, `stopped` (finished OK), or `error`.
+    /// Other states exist (`unknown`) but the UI treats them as in-progress.
+    pub status: String,
+    /// Human-readable exit status when `status == "stopped"`.
+    #[serde(default)]
+    pub exitstatus: Option<String>,
+    /// Task start time, Unix seconds.
+    #[serde(default)]
+    pub starttime: Option<u64>,
+    /// Task end time, Unix seconds (0 if still running).
+    #[serde(default)]
+    pub endtime: Option<u64>,
+    /// Free-form type identifier (e.g. `qmstart`, `qmstop`, `qmdestroy`).
+    #[serde(default)]
+    pub r#type: Option<String>,
+    /// User that initiated the task.
+    #[serde(default)]
+    pub user: Option<String>,
+}
+
 /// Proxmox version info (from `/version`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Version {
