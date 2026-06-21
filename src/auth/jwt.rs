@@ -24,7 +24,11 @@ pub struct JwtService {
     encoding_key: EncodingKey,
     decoding_key: DecodingKey,
     validation: Validation,
+    /// Token issuer (read by `decode()` via `validation`).
+    #[allow(dead_code)]
     issuer: String,
+    /// Token audience (read by `decode()` via `validation`).
+    #[allow(dead_code)]
     audience: String,
 }
 
@@ -68,7 +72,6 @@ impl JwtService {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     // TODO: generate test keypair, test round-trip
 }

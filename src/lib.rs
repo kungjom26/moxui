@@ -1,4 +1,4 @@
-//! MoxUI library crate.
+//! `MoxUI` library crate.
 //!
 //! Modern, secure Rust-based web UI for Proxmox VE.
 //!
@@ -21,7 +21,7 @@ pub mod state;
 pub mod telemetry;
 pub mod ui;
 
-/// Current MoxUI version (semver).
+/// Current `MoxUI` version (semver).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Build profile (debug/release).

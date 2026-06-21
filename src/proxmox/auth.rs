@@ -5,9 +5,9 @@ use serde::{Deserialize, Serialize};
 /// Authentication ticket from `/access/ticket` endpoint.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Ticket {
-    /// PVEAuthCookie value (used as `Cookie: PVEAuthCookie=...`).
+    /// `PVEAuthCookie` value (used as `Cookie: PVEAuthCookie=...`).
     pub ticket: String,
-    /// CSRFPreventionToken (required for POST/PUT/DELETE).
+    /// `CSRFPreventionToken` (required for POST/PUT/DELETE).
     pub csrf_token: String,
     /// Username (e.g., `root@pam`).
     pub username: String,
@@ -17,6 +17,6 @@ pub struct Ticket {
 
 /// Raw response from `/api2/json/access/ticket`.
 #[derive(Debug, Deserialize)]
-pub(super) struct TicketResponse {
+pub(crate) struct TicketResponse {
     pub data: Ticket,
 }

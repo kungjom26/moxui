@@ -7,7 +7,7 @@ use tokio::sync::RwLock;
 
 use crate::config::ClusterConfig;
 use crate::error::{AppError, AppResult};
-use crate::proxmox::auth::Ticket;
+use crate::proxmox::auth::{Ticket, TicketResponse};
 use crate::proxmox::circuit_breaker::CircuitBreaker;
 use crate::proxmox::retry::RetryPolicy;
 
@@ -23,12 +23,14 @@ pub struct ProxmoxClient {
     ticket: Arc<RwLock<Option<Ticket>>>,
     /// Circuit breaker.
     circuit_breaker: CircuitBreaker,
-    /// Retry policy.
+    /// Retry policy (consumed by `request()` helper in Day 2).
+    #[allow(dead_code)]
     retry_policy: RetryPolicy,
 }
 
 impl ProxmoxClient {
     /// Create a new Proxmox client for the given cluster.
+    #[allow(clippy::unused_async)] // async signature kept for API stability — will become async when login pre-warm is added
     pub async fn new(config: ClusterConfig) -> AppResult<Self> {
         let mut builder = Client::builder()
             .danger_accept_invalid_certs(config.insecure_skip_verify)
@@ -139,11 +141,6 @@ impl ProxmoxClient {
     pub fn record_failure(&self) {
         self.circuit_breaker.record_failure();
     }
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct TicketResponse {
-    data: Ticket,
 }
 
 #[cfg(test)]

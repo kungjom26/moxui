@@ -1,6 +1,6 @@
 //! Authentication and authorization.
 //!
-//! Supports local (bcrypt + JWT), TOTP, WebAuthn, OIDC, and LDAP.
+//! Supports local (bcrypt + JWT), TOTP, `WebAuthn`, OIDC, and LDAP.
 //! See `docs/FEATURE_SCOPE.md` §6 for the full feature list.
 
 pub mod jwt;

@@ -30,7 +30,7 @@ pub fn init(config: &LoggingConfig) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+
     use crate::config::LoggingConfig;
 
     #[test]

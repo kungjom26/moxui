@@ -1,4 +1,4 @@
-//! MoxUI binary entry point.
+//! `MoxUI` binary entry point.
 //!
 //! See [`moxui::lib`] for the library API.
 

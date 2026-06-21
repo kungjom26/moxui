@@ -5,6 +5,7 @@
 use crate::config::DatabaseConfig;
 
 /// Create a database connection pool.
+#[allow(clippy::unused_async)] // async signature kept for API stability — impl becomes sync once pool lands
 pub async fn create_pool(config: &DatabaseConfig) -> anyhow::Result<()> {
     // TODO: implement r2d2_sqlite pool with PRAGMAs
     // For now, return Ok so the app starts

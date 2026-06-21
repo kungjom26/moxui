@@ -5,33 +5,46 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Proxmox version info.
+/// Proxmox version info (from `/version`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Version {
+    /// Proxmox VE version (e.g. `8.2.4`).
     pub version: String,
+    /// Proxmox VE release (e.g. `8.2`).
     pub release: String,
+    /// Repository ID the package was built from.
     pub repoid: String,
 }
 
 /// Node status (from `/nodes/{node}/status`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeStatus {
+    /// Node hostname.
     pub node: String,
+    /// Node status (e.g. `online`, `offline`, `unknown`).
     pub status: String,
+    /// Current CPU usage as a fraction in `[0.0, 1.0]`.
     #[serde(default)]
     pub cpu: Option<f64>,
+    /// Support level (e.g. `basic`, `enterprise`).
     #[serde(default)]
     pub level: Option<String>,
+    /// Total number of logical CPU cores.
     #[serde(default)]
     pub maxcpu: Option<u32>,
+    /// Used memory in bytes.
     #[serde(default)]
     pub mem: Option<u64>,
+    /// Total memory in bytes.
     #[serde(default)]
     pub maxmem: Option<u64>,
+    /// Used root disk space in bytes.
     #[serde(default)]
     pub disk: Option<u64>,
+    /// Total root disk space in bytes.
     #[serde(default)]
     pub maxdisk: Option<u64>,
+    /// Node uptime in seconds.
     #[serde(default)]
     pub uptime: Option<u64>,
 }
@@ -39,34 +52,51 @@ pub struct NodeStatus {
 /// VM/LXC resource entry (from `/cluster/resources?type=vm`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VmResource {
+    /// Virtual machine ID (unique within a cluster).
     pub vmid: u32,
+    /// VM/LXC name.
     pub name: String,
+    /// Node that currently hosts the VM.
     pub node: String,
+    /// Current status (e.g. `running`, `stopped`, `paused`).
     pub status: String,
+    /// Current CPU usage as a fraction in `[0.0, 1.0]`.
     #[serde(default)]
     pub cpu: Option<f64>,
+    /// Allocated CPU cores.
     #[serde(default)]
     pub cpus: Option<f64>,
+    /// Used memory in bytes.
     #[serde(default)]
     pub mem: Option<u64>,
+    /// Configured memory in bytes.
     #[serde(default)]
     pub maxmem: Option<u64>,
+    /// Used root disk in bytes.
     #[serde(default)]
     pub disk: Option<u64>,
+    /// Configured root disk in bytes.
     #[serde(default)]
     pub maxdisk: Option<u64>,
+    /// Total network ingress in bytes.
     #[serde(default)]
     pub netin: Option<u64>,
+    /// Total network egress in bytes.
     #[serde(default)]
     pub netout: Option<u64>,
+    /// Total bytes read from disk.
     #[serde(default)]
     pub diskread: Option<u64>,
+    /// Total bytes written to disk.
     #[serde(default)]
     pub diskwrite: Option<u64>,
+    /// Uptime in seconds.
     #[serde(default)]
     pub uptime: Option<u64>,
+    /// `1` if this entry is a template, `0` otherwise.
     #[serde(default)]
     pub template: Option<u8>,
+    /// Semicolon-separated tags (e.g. `prod;web`).
     #[serde(default)]
     pub tags: Option<String>,
 }

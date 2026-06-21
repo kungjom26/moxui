@@ -1,6 +1,6 @@
 //! Configuration loading (figment: env + yaml + toml).
 //!
-//! Loads MoxUI configuration from multiple sources (priority high → low):
+//! Loads `MoxUI` configuration from multiple sources (priority high → low):
 //! 1. CLI args (clap)
 //! 2. Environment variables (`MOXUI_*`)
 //! 3. Config file (`config.yaml` / `config.toml`)
@@ -8,7 +8,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Top-level configuration for MoxUI.
+/// Top-level configuration for `MoxUI`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     /// Server bind address.
@@ -34,7 +34,7 @@ pub struct ServerConfig {
 /// Database configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatabaseConfig {
-    /// SQLite file path (e.g., `/home/moxui/data/moxui.db`).
+    /// `SQLite` file path (e.g., `/home/moxui/data/moxui.db`).
     pub path: String,
     /// Maximum connections in pool.
     #[serde(default = "default_max_connections")]
@@ -88,7 +88,7 @@ pub struct ClusterConfig {
     /// Skip TLS verification (insecure, OK for internal self-signed).
     #[serde(default)]
     pub insecure_skip_verify: bool,
-    /// CA cert PEM (alternative to insecure_skip_verify).
+    /// CA cert PEM (alternative to `insecure_skip_verify`).
     #[serde(default)]
     pub ca_cert_pem: Option<String>,
 }

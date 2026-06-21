@@ -50,7 +50,8 @@ impl RetryPolicy {
                         tracing::warn!(
                             attempt = attempt + 1,
                             max_attempts = self.max_attempts,
-                            backoff_ms = backoff.as_millis() as u64,
+                            backoff_ms = u64::try_from(backoff.as_millis())
+                                .unwrap_or(u64::MAX),
                             error = %e,
                             "retrying after error"
                         );

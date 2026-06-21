@@ -10,7 +10,7 @@ use axum::{
 use serde_json::json;
 use thiserror::Error;
 
-/// Top-level error type for MoxUI.
+/// Top-level error type for `MoxUI`.
 #[derive(Debug, Error)]
 pub enum AppError {
     /// Resource not found (HTTP 404).
