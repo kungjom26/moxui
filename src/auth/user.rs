@@ -30,7 +30,7 @@ pub struct User {
     pub id: String,
     /// Login name (must be unique, case-sensitive).
     pub username: String,
-    /// Display name (free-form, e.g. "พี่เสือ" or "Tigger Bot").
+    /// Display name (free-form, e.g. "MoxUI Admin" or "Ops Team Lead").
     pub display_name: String,
     /// Email (optional, not used for auth).
     pub email: Option<String>,

@@ -2,7 +2,7 @@
 
 > **Purpose:** แผนการทำงานฉบับสมบูรณ์ ตั้งแต่เริ่มเขียนโค้ดจน deploy production
 >
-> **Audience:** พี่เสือ (project owner) + กุ้งจ่อม (developer)
+> **Audience:** moxui (project owner) + กุ้งจ่อม (developer)
 >
 > **Structure:** 4 major stages × N sub-phases พร้อม deliverables, acceptance criteria, risk mitigation
 >
@@ -558,12 +558,12 @@
 
 | Task | Owner | Deliverable |
 |---|---|---|
-| Pull `ghcr.io/kungjom26/moxui:v0.1.0-alpha` | พี่เสือ | Local image |
-| Configure `docker-compose.yml` | พี่เสือ | Domain, admin password |
-| Start container | พี่เสือ | MoxUI up |
-| First login as admin | พี่เสือ | Force 2FA setup |
-| Setup TOTP | พี่เสือ | Google Authenticator |
-| Backup codes saved | พี่เสือ | 8 codes written down |
+| Pull `ghcr.io/kungjom26/moxui:v0.1.0-alpha` | moxui | Local image |
+| Configure `docker-compose.yml` | moxui | Domain, admin password |
+| Start container | moxui | MoxUI up |
+| First login as admin | moxui | Force 2FA setup |
+| Setup TOTP | moxui | Google Authenticator |
+| Backup codes saved | moxui | 8 codes written down |
 
 **Acceptance criteria:**
 - [ ] MoxUI accessible via configured domain
@@ -575,12 +575,12 @@
 
 | Task | Owner | Deliverable |
 |---|---|---|
-| Login to MoxUI | พี่เสือ | Authenticated |
-| Settings → Clusters → Add | พี่เสือ | |
-| Connect pve11 (root@pam) | พี่เสือ | Cluster added |
-| Connect pve12 | พี่เสือ | |
-| Connect pve13 | พี่เสือ | |
-| Verify all 3 show as reachable | พี่เสือ | Green status |
+| Login to MoxUI | moxui | Authenticated |
+| Settings → Clusters → Add | moxui | |
+| Connect pve11 (root@pam) | moxui | Cluster added |
+| Connect pve12 | moxui | |
+| Connect pve13 | moxui | |
+| Verify all 3 show as reachable | moxui | Green status |
 
 **Acceptance criteria:**
 - [ ] All 3 homelab clusters connected
@@ -591,13 +591,13 @@
 
 | Task | Owner | Deliverable |
 |---|---|---|
-| Create user "operator1" | พี่เสือ | role=operator |
-| Create user "viewer1" | พี่เสือ | role=viewer |
-| Setup 2FA for both | พี่เสือ | |
-| Login as operator1 | พี่เสือ | Should work |
-| Try to delete VM as operator1 | พี่เสือ | Should get 403 |
-| Login as viewer1 | พี่เสือ | Read-only |
-| Try to start VM as viewer1 | พี่เสือ | Should get 403 |
+| Create user "operator1" | moxui | role=operator |
+| Create user "viewer1" | moxui | role=viewer |
+| Setup 2FA for both | moxui | |
+| Login as operator1 | moxui | Should work |
+| Try to delete VM as operator1 | moxui | Should get 403 |
+| Login as viewer1 | moxui | Read-only |
+| Try to start VM as viewer1 | moxui | Should get 403 |
 
 **Acceptance criteria:**
 - [ ] All 3 users can login
@@ -673,7 +673,7 @@
 |---|---|---|
 | Review all findings | Both | Bug list |
 | File bugs | กุ้งจ่อม | GitHub issues |
-| Sign-off on MVP | พี่เสือ | Ready for UAT |
+| Sign-off on MVP | moxui | Ready for UAT |
 
 **Deliverable:** MVP ready for UAT
 
@@ -688,10 +688,10 @@
 | Task | Owner | Deliverable |
 |---|---|---|
 | Write test cases (54 MUST features) | กุ้งจ่อม | `docs/UAT/test-cases.md` |
-| Setup test environment | พี่เสือ | UAT instance |
-| Setup test users | พี่เสือ | 3 users (admin/operator/viewer) |
-| Setup test VMs | พี่เสือ | 10 VMs across clusters |
-| Configure test cluster | พี่เสือ | Connect homelab |
+| Setup test environment | moxui | UAT instance |
+| Setup test users | moxui | 3 users (admin/operator/viewer) |
+| Setup test VMs | moxui | 10 VMs across clusters |
+| Configure test cluster | moxui | Connect homelab |
 
 **Acceptance criteria:**
 - [ ] All 54 MUST features have test cases
@@ -792,7 +792,7 @@ wrk -t12 -c500 -d5m -H "Authorization: Bearer ***" \
 
 | Task | Owner | Deliverable |
 |---|---|---|
-| Triage all bugs found | พี่เสือ | Prioritized list |
+| Triage all bugs found | moxui | Prioritized list |
 | Fix all P0 (blockers) | กุ้งจ่อม | Hotfix release v0.9.9 |
 | Fix all P1 (critical) | กุ้งจ่อม | |
 | Document P2/P3 (nice-to-have) | กุ้งจ่อม | GitHub issues |
@@ -808,7 +808,7 @@ wrk -t12 -c500 -d5m -H "Authorization: Bearer ***" \
 |---|---|---|
 | Final review | Both | |
 | UAT report | กุ้งจ่อม | `docs/UAT/UAT-report.md` |
-| Sign-off | พี่เสือ | Ready for deploy |
+| Sign-off | moxui | Ready for deploy |
 
 **Deliverable:** UAT passed, ready for production deploy
 
@@ -825,11 +825,11 @@ wrk -t12 -c500 -d5m -H "Authorization: Bearer ***" \
 | All tests passing | กุ้งจ่อม | ✅/❌ |
 | `cargo audit` clean | กุ้งจ่อม | |
 | Container image signed | กุ้งจ่อม | |
-| Backup of current MoxUI (if upgrading) | พี่เสือ | |
+| Backup of current MoxUI (if upgrading) | moxui | |
 | Rollback plan ready | Both | |
-| On-call rotation | พี่เสือ | |
-| DNS ready (homelab domain) | พี่เสือ | |
-| TLS cert ready (Let's Encrypt) | พี่เสือ | |
+| On-call rotation | moxui | |
+| DNS ready (homelab domain) | moxui | |
+| TLS cert ready (Let's Encrypt) | moxui | |
 | Smoke test in staging | Both | |
 | Documentation complete | กุ้งจ่อม | |
 
@@ -841,9 +841,9 @@ wrk -t12 -c500 -d5m -H "Authorization: Bearer ***" \
 
 | Task | Owner | Deliverable |
 |---|---|---|
-| Deploy v1.0.0 to staging env | พี่เสือ | Container running |
+| Deploy v1.0.0 to staging env | moxui | Container running |
 | Smoke test all critical paths | Both | Pass/fail |
-| Monitor for 2 hours | พี่เสือ | Logs + metrics |
+| Monitor for 2 hours | moxui | Logs + metrics |
 
 **Acceptance criteria:**
 - [ ] All smoke tests pass
@@ -854,10 +854,10 @@ wrk -t12 -c500 -d5m -H "Authorization: Bearer ***" \
 
 | Task | Owner | Deliverable |
 |---|---|---|
-| Deploy v1.0.0 to homelab cluster | พี่เสือ | pve11/12/13 connected |
-| DNS cutover | พี่เสือ | moxui.homelab.example.com |
-| Announce to team (if any) | พี่เสือ | "MoxUI is live" |
-| Monitor for 4 hours | พี่เสือ | Logs + metrics |
+| Deploy v1.0.0 to homelab cluster | moxui | pve11/12/13 connected |
+| DNS cutover | moxui | moxui.homelab.example.com |
+| Announce to team (if any) | moxui | "MoxUI is live" |
+| Monitor for 4 hours | moxui | Logs + metrics |
 
 **Acceptance criteria:**
 - [ ] Homelab fully operational
@@ -869,7 +869,7 @@ wrk -t12 -c500 -d5m -H "Authorization: Bearer ***" \
 | Task | Owner | Deliverable |
 |---|---|---|
 | Review logs (errors, warnings) | กุ้งจ่อม | Issue list |
-| Review metrics (latency, memory, CPU) | พี่เสือ | Baseline |
+| Review metrics (latency, memory, CPU) | moxui | Baseline |
 | Apply config tuning | กุ้งจ่อม | Cache TTL, rate limits |
 | Apply hotfixes if needed | กุ้งจ่อม | Patch release |
 
@@ -881,11 +881,11 @@ wrk -t12 -c500 -d5m -H "Authorization: Bearer ***" \
 
 | Task | Owner | Deliverable |
 |---|---|---|
-| Backup production MoxUI config | พี่เสือ | |
-| Deploy v1.0.0 to production cluster | พี่เสือ | Container running |
-| Configure production Proxmox cluster | พี่เสือ | Connected |
+| Backup production MoxUI config | moxui | |
+| Deploy v1.0.0 to production cluster | moxui | Container running |
+| Configure production Proxmox cluster | moxui | Connected |
 | Test critical workflows | Both | |
-| Monitor for 2 hours | พี่เสือ | |
+| Monitor for 2 hours | moxui | |
 
 **Acceptance criteria:**
 - [ ] Production MoxUI operational
@@ -896,11 +896,11 @@ wrk -t12 -c500 -d5m -H "Authorization: Bearer ***" \
 
 | Task | Owner | Deliverable |
 |---|---|---|
-| Update DNS records | พี่เสือ | moxui.example.com → MoxUI |
+| Update DNS records | moxui | moxui.example.com → MoxUI |
 | Wait for TTL | — | 1 hour |
 | Verify cutover | Both | All traffic to new instance |
-| Send announcement | พี่เสือ | Team + users |
-| Monitor for 4 hours | พี่เสือ | |
+| Send announcement | moxui | Team + users |
+| Monitor for 4 hours | moxui | |
 
 **Acceptance criteria:**
 - [ ] DNS cutover successful
@@ -911,7 +911,7 @@ wrk -t12 -c500 -d5m -H "Authorization: Bearer ***" \
 
 | Task | Owner | Deliverable |
 |---|---|---|
-| 7-day soak test results | พี่เสือ | Report |
+| 7-day soak test results | moxui | Report |
 | Final metrics | Both | Performance baseline |
 | Issues encountered | Both | Lessons learned |
 | Update docs | กุ้งจ่อม | If needed |
@@ -1025,7 +1025,7 @@ wrk -t12 -c500 -d5m -H "Authorization: Bearer ***" \
 
 ### 10.2 Weekly
 
-- พี่เสือ reviews week's progress
+- moxui reviews week's progress
 - Adjust plan if needed
 - Plan next week's priorities
 

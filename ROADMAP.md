@@ -576,7 +576,7 @@ Evening (30 min):
 | ✅ Run cargo commands (build, test, clippy) | เต็มที่ |
 | ✅ Deploy to homelab via API/SSH | ต้อง consent |
 | ✅ Generate test data, mock servers | เต็มที่ |
-| ⚠️ Make architectural decisions | แนะนำ แต่พี่เสือตัดสินใจ |
+| ⚠️ Make architectural decisions | แนะนำ แต่ moxui ตัดสินใจ |
 | ❌ Manage production clusters | destructive — ต้อง explicit approval |
 
 ---
@@ -585,7 +585,7 @@ Evening (30 min):
 
 **ตอนนี้:** PROPOSAL.md + ROADMAP.md เสร็จแล้ว
 
-**Next:** รอพี่เสือ approve proposal → เริ่ม Phase 0 Day 1 (Cargo project setup)
+**Next:** รอ moxui approve proposal → เริ่ม Phase 0 Day 1 (Cargo project setup)
 
 **ถ้า approve ตอนนี้** กุ้งจ่อมจะ:
 1. `cd ~/projects/moxui/`

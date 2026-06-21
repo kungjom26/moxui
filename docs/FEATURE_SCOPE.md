@@ -17,7 +17,7 @@
 
 ## 🎯 MVP Goal (1 ประโยค)
 
-> Deploy MoxUI container เดียว แล้วใช้ dashboard เดียวดู VM/LXC ทุก cluster ของ พี่เสือ ได้ พร้อม start/stop VM, เปิด console, audit log, 2FA — ปลอดภัย รวดเร็ว เสถียร
+> Deploy MoxUI container เดียว แล้วใช้ dashboard เดียวดู VM/LXC ทุก cluster ของ moxui ได้ พร้อม start/stop VM, เปิด console, audit log, 2FA — ปลอดภัย รวดเร็ว เสถียร
 
 ---
 
@@ -386,7 +386,7 @@
 
 **MUST (54 features) — all required for v1.0.0:**
 
-### Auth (14) — ใส่ครบทุกตัวตามที่ พี่เสือ approve
+### Auth (14) — ใส่ครบทุกตัวตามที่ moxui approve
 - [ ] A-001 Login (email + password)
 - [ ] A-002 JWT RS256
 - [ ] A-003 Refresh token rotation
@@ -514,13 +514,13 @@
 
 ---
 
-## 🎯 ขอ feedback จาก พี่เสือ
+## 🎯 ขอ feedback จาก moxui
 
 **ตรวจสอบ:**
 
 1. **MVP scope ขนาดนี้พอมั้ย?** 32 MUST features + ~25 SHOULD = ~57 features สำหรับ v1.0.0 — คิดว่า tight หรือพอดี?
 2. **MUST list ตรงไหนควรลด?** เช่น VM-201 console ต้องมีใน MVP มั้ย?
-3. **MUST list ตรงไหนควรเพิ่ม?** มีอะไรที่พี่เสือขาดไม่ได้?
+3. **MUST list ตรงไหนควรเพิ่ม?** มีอะไรที่ moxui ขาดไม่ได้?
 4. **SHOULD → MUST?** ตัวไหนใน SHOULD ที่ควรเป็น MUST เพราะใช้บ่อย?
 5. **COULD → SHOULD?** ตัวไหนที่อยากได้ใน v1.0.0 ไม่ต้องรอ v1.2?
 6. **WON'T → reconsider?** ตัวไหนที่ควรทำใน MVP ที่ผม skip ไป?

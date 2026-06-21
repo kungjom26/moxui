@@ -2,7 +2,7 @@
 
 > **Tagline:** Modern, secure Rust-based web UI for Proxmox VE — deployed as a single container, designed for multi-cluster operations.
 >
-> **Author:** กุ้งจ่อม (Hermes Agent) for พี่เสือ
+> **Author:** กุ้งจ่อม (Hermes Agent) for moxui
 > **Date:** 2026-06-20
 > **Status:** Proposal — awaiting approval
 > **License:** MIT ✅ (decided 2026-06-20)
@@ -42,7 +42,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  Browser (พี่เสือ / admin)                                      │
+│  Browser (moxui / admin)                                      │
 │    ↑ HTTPS (TLS 1.3) + JWT (RS256, 15min access + 7d refresh) │
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │  Reverse Proxy (nginx/Caddy/Traefik)                     │  │
@@ -661,7 +661,7 @@ Cross-Origin-Resource-Policy: same-origin
 
 ## 13. 🤝 Decision Requested
 
-**พี่เสือ ต้องตัดสินใจ:**
+**moxui ต้องตัดสินใจ:**
 
 1. **License** — Apache-2.0 / MIT / AGPL?
 2. **Repository location** — public GitHub `kungjom26/moxui`?
