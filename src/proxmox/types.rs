@@ -212,6 +212,53 @@ pub struct StorageContent {
     pub ctime: Option<u64>,
 }
 
+/// A network interface on a Proxmox node (from `/nodes/{node}/network`).
+///
+/// Proxmox returns bridges, bonds, VLANs, physical NICs, and Linux
+/// aliases as a single flat list, with the `type` field distinguishing
+/// them. The fields below cover the common subset; Proxmox returns
+/// more fields per type that we don't model yet.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeNetwork {
+    /// Interface name (e.g. `vmbr0`, `eno1`, `bond0`, `wlan0`).
+    pub iface: String,
+    /// Interface type (`bridge`, `bond`, `eth`, `vlan`, `alias`, `OVSBridge`).
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// Active flag (`1` = up, `0` = down). Older Proxmox versions
+    /// reported this as a numeric; newer versions may report `"active"`
+    /// in the parent object — we only model the integer form here.
+    #[serde(default)]
+    pub active: Option<u8>,
+    /// IPv4 address with CIDR (e.g. `10.10.11.11/24`).
+    #[serde(default)]
+    pub address: Option<String>,
+    /// IPv4 gateway.
+    #[serde(default)]
+    pub gateway: Option<String>,
+    /// IPv6 address with CIDR.
+    #[serde(default)]
+    pub address6: Option<String>,
+    /// IPv6 gateway.
+    #[serde(default)]
+    pub gateway6: Option<String>,
+    /// For `bridge`: which physical interfaces are attached.
+    #[serde(default)]
+    pub bridge_ports: Option<String>,
+    /// For `vlan`: the underlying raw interface (e.g. `eno1` for `eno1.10`).
+    #[serde(default)]
+    pub iface_vlan_raw_device: Option<String>,
+    /// For `vlan`: the VLAN tag (e.g. `10` for `eno1.10`).
+    #[serde(default)]
+    pub vlan_id: Option<u32>,
+    /// Autostart on boot (`1` = yes, `0` = no).
+    #[serde(default)]
+    pub autostart: Option<u8>,
+    /// Comments / description from the Proxmox UI.
+    #[serde(default)]
+    pub comments: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

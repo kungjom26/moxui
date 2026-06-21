@@ -3,6 +3,7 @@
 pub mod auth;
 pub mod health;
 pub mod lxcs;
+pub mod networks;
 pub mod storages;
 pub mod vms;
 
@@ -52,6 +53,11 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v1/storages/:cluster/:node/:storage/content",
             get(storages::storage_content),
+        )
+        .route("/api/v1/networks", get(networks::list_networks))
+        .route(
+            "/api/v1/networks/:cluster/:node",
+            get(networks::node_networks),
         )
         .route_layer(from_fn_with_state(state.clone(), require_auth));
 

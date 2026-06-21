@@ -429,6 +429,31 @@ impl ProxmoxClient {
         }
     }
 
+    /// List network interfaces on a specific node (bridges, bonds, VLANs,
+    /// physical NICs, aliases). Bounded by [`LIST_VMS_TIMEOUT_SECS`].
+    ///
+    /// Proxmox endpoint: `GET /nodes/{node}/network`
+    /// Returns a flat list of all interfaces — the `kind` field
+    /// distinguishes them (`bridge`, `bond`, `eth`, `vlan`, `alias`,
+    /// `OVSBridge`).
+    pub async fn list_networks(
+        &self,
+        node: &str,
+    ) -> AppResult<Vec<crate::proxmox::types::NodeNetwork>> {
+        let path = format!("nodes/{node}/network");
+        match tokio::time::timeout(
+            Duration::from_secs(LIST_VMS_TIMEOUT_SECS),
+            self.get::<Vec<crate::proxmox::types::NodeNetwork>>(&path),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_elapsed) => Err(AppError::Proxmox(format!(
+                "list_networks timed out after {LIST_VMS_TIMEOUT_SECS}s"
+            ))),
+        }
+    }
+
     /// Lightweight ping — fetch `/version` to verify reachability + ticket cache.
     ///
     /// Returns `Ok(())` on any 2xx (ticket can be acquired AND version returns).
@@ -904,6 +929,47 @@ mod vm_action_integration_tests {
             .mount(&server)
             .await;
 
+        // /cluster/network — cluster-level network list (used by list_networks).
+        Mock::given(method("GET"))
+            .and(path("/api2/json/network"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [
+                    {
+                        "iface": "vmbr0", "type": "bridge", "active": 1,
+                        "address": "10.10.11.11/24", "gateway": "10.10.11.254",
+                        "bridge_ports": "eno1", "autostart": 1,
+                        "comments": "primary bridge"
+                    },
+                    {
+                        "iface": "eno1", "type": "eth", "active": 1,
+                        "autostart": 1
+                    },
+                    {
+                        "iface": "eno1.18", "type": "vlan", "active": 1,
+                        "address": "10.10.18.11/24",
+                        "iface_vlan_raw_device": "eno1", "vlan_id": 18,
+                        "autostart": 1
+                    }
+                ]
+            })))
+            .mount(&server)
+            .await;
+
+        // /nodes/pve11/network — per-node network list (used by node_networks).
+        Mock::given(method("GET"))
+            .and(path("/api2/json/nodes/pve11/network"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [
+                    {
+                        "iface": "vmbr0", "type": "bridge", "active": 1,
+                        "address": "10.10.11.11/24", "gateway": "10.10.11.254",
+                        "bridge_ports": "eno1", "autostart": 1
+                    }
+                ]
+            })))
+            .mount(&server)
+            .await;
+
         // /nodes/pve11/qemu/103/status/start — returns UPID.
         Mock::given(method("POST"))
             .and(path("/api2/json/nodes/pve11/qemu/103/status/start"))
@@ -1252,5 +1318,112 @@ mod vm_action_integration_tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    // ---- Day 9: Network read endpoints ----
+
+    #[tokio::test]
+    async fn test_list_networks_aggregates_bridges_vlans() {
+        let (_server, state, _audit) = setup_with_mock().await;
+        let token = viewer_token(&state.jwt);
+        let app = crate::api::router(state);
+
+        let resp = app
+            .oneshot(authed_get("/api/v1/networks", &token))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(resp.into_body(), 8192).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+
+        let nets = body["networks"].as_array().expect("networks array");
+        assert_eq!(
+            nets.len(),
+            3,
+            "expected 3 mock interfaces (bridge/eth/vlan)"
+        );
+
+        // Bridge row.
+        let bridge = nets
+            .iter()
+            .find(|n| n["iface"] == "vmbr0")
+            .expect("vmbr0 in mock");
+        // The aggregated handler returns NetworkRow (with `kind` field,
+        // not the wire-shape `type`).
+        assert_eq!(bridge["kind"], "bridge");
+        assert_eq!(bridge["cluster"], "homelab");
+        assert_eq!(bridge["address"], "10.10.11.11/24");
+        assert_eq!(bridge["bridge_ports"], "eno1");
+
+        // VLAN row.
+        let vlan = nets
+            .iter()
+            .find(|n| n["iface"] == "eno1.18")
+            .expect("eno1.18 in mock");
+        assert_eq!(vlan["kind"], "vlan");
+        assert_eq!(vlan["vlan_id"], 18);
+        assert_eq!(vlan["iface_vlan_raw_device"], "eno1");
+
+        // Errors map is empty.
+        assert!(body["errors"].as_object().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_node_networks_returns_per_node_list() {
+        let (_server, state, _audit) = setup_with_mock().await;
+        let token = viewer_token(&state.jwt);
+        let app = crate::api::router(state);
+
+        let resp = app
+            .oneshot(authed_get("/api/v1/networks/homelab/pve11", &token))
+            .await
+            .unwrap();
+        let status = resp.status();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "body={}",
+            String::from_utf8_lossy(&body_bytes)
+        );
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+
+        let nets = body.as_array().expect("array of NodeNetwork");
+        assert_eq!(nets.len(), 1, "expected 1 per-node interface, body={body}");
+        assert_eq!(nets[0]["iface"], "vmbr0", "body={body}");
+        // The `kind` field is renamed to `type` in JSON (matches Proxmox's
+        // wire shape — Rust-side struct uses `kind` for ergonomics).
+        assert_eq!(nets[0]["type"], "bridge", "body={body}");
+    }
+
+    #[tokio::test]
+    async fn test_networks_endpoint_requires_auth() {
+        let (_server, state, _audit) = setup_with_mock().await;
+        let app = crate::api::router(state);
+
+        let resp = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("GET")
+                    .uri("/api/v1/networks")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_node_networks_returns_404_for_unknown_cluster() {
+        let (_server, state, _audit) = setup_with_mock().await;
+        let token = viewer_token(&state.jwt);
+        let app = crate::api::router(state);
+
+        let resp = app
+            .oneshot(authed_get("/api/v1/networks/nonexistent/pve11", &token))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 }
