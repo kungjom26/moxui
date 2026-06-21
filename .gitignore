@@ -62,4 +62,5 @@ profiles/moxui-*/
 **/profile.yaml
 
 # Team docs (LOCAL-ONLY — use ~/.hermes/shared/moxui/ for team coordination instead)
-docs/TEAM.md
+docs/TEAM.mdmoxui.db.audit
+*.db.audit

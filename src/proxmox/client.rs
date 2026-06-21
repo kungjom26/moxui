@@ -7,7 +7,7 @@ use tokio::sync::RwLock;
 
 use crate::config::ClusterConfig;
 use crate::error::{AppError, AppResult};
-use crate::proxmox::auth::{Ticket, TicketResponse};
+use crate::proxmox::auth::{SecretTicket, Ticket, TicketResponse};
 use crate::proxmox::circuit_breaker::CircuitBreaker;
 use crate::proxmox::retry::RetryPolicy;
 
@@ -18,14 +18,24 @@ use reqwest::Client;
 /// (e.g. `/readyz`).
 pub const PING_TIMEOUT_SECS: u64 = 3;
 
+/// Timeout (seconds) for [`ProxmoxClient::list_vms`] — bounded so a slow
+/// or unreachable cluster cannot stall `/api/v1/vms` indefinitely.
+pub const LIST_VMS_TIMEOUT_SECS: u64 = 10;
+
+/// Timeout (seconds) for [`ProxmoxClient::post`] — bounded so a slow or
+/// unreachable cluster cannot stall write endpoints (`vm_action`, etc.)
+/// indefinitely. Same rationale as [`LIST_VMS_TIMEOUT_SECS`].
+pub const POST_TIMEOUT_SECS: u64 = 10;
+
 /// Proxmox API client for one cluster.
 pub struct ProxmoxClient {
     /// Cluster configuration.
     config: ClusterConfig,
     /// HTTP client (connection pool).
     http: Client,
-    /// Current ticket (auto-refreshed).
-    ticket: Arc<RwLock<Option<Ticket>>>,
+    /// Current ticket (auto-refreshed). Wrapped in [`SecretTicket`] so
+    /// plaintext never leaks via Debug/println/eyeball.
+    ticket: Arc<RwLock<Option<SecretTicket>>>,
     /// Circuit breaker.
     circuit_breaker: CircuitBreaker,
     /// Retry policy (consumed by `request()` helper in Day 2).
@@ -100,7 +110,7 @@ impl ProxmoxClient {
 
         let body: TicketResponse = resp.json().await?;
         let mut guard = self.ticket.write().await;
-        *guard = Some(body.data);
+        *guard = Some(SecretTicket::new(body.data));
         self.circuit_breaker.record_success();
         Ok(())
     }
@@ -110,9 +120,9 @@ impl ProxmoxClient {
         let should_refresh = {
             let guard = self.ticket.read().await;
             match guard.as_ref() {
-                Some(t) => {
+                Some(secret) => {
                     let now = chrono::Utc::now().timestamp();
-                    t.expires_at - now < 300 // refresh 5 min before expiry
+                    secret.expose_ticket().expires_at - now < 300 // refresh 5 min before expiry
                 }
                 None => true,
             }
@@ -129,7 +139,8 @@ impl ProxmoxClient {
         self.ensure_ticket().await?;
         let guard = self.ticket.read().await;
         guard
-            .clone()
+            .as_ref()
+            .map(|s| s.expose_ticket().clone())
             .ok_or_else(|| AppError::Internal("ticket missing after ensure".into()))
     }
 
@@ -198,6 +209,37 @@ impl ProxmoxClient {
         Ok(body.data)
     }
 
+    /// Issue a state-changing request (POST/PUT/DELETE) to Proxmox.
+    ///
+    /// Auto-acquires ticket AND includes the CSRF token header (required
+    /// by Proxmox for all write operations). Returns the deserialized
+    /// response data or the raw UPID string for fire-and-forget calls.
+    ///
+    /// # Arguments
+    ///
+    /// * `method` — HTTP method (`POST`/`PUT`/`DELETE`).
+    /// * `path` — API path under `/api2/json/`.
+    /// * `body` — optional JSON body (use `&Empty::new()` for no body).
+    pub async fn post<T: serde::de::DeserializeOwned + Default>(&self, path: &str) -> AppResult<T> {
+        let ticket = self.current_ticket().await?;
+        let url = self.build_url(path);
+        let fut = self
+            .http
+            .post(&url)
+            .header("Cookie", format!("PVEAuthCookie={}", ticket.ticket))
+            .header("CSRFPreventionToken", &ticket.csrf_token)
+            .send();
+        let resp = match tokio::time::timeout(Duration::from_secs(POST_TIMEOUT_SECS), fut).await {
+            Ok(result) => result?,
+            Err(_elapsed) => {
+                return Err(AppError::Proxmox(format!(
+                    "POST {path} timed out after {POST_TIMEOUT_SECS}s"
+                )))
+            }
+        };
+        self.handle_response::<T>(resp).await
+    }
+
     /// Record success (reset circuit breaker).
     pub fn record_success(&self) {
         self.circuit_breaker.record_success();
@@ -212,8 +254,21 @@ impl ProxmoxClient {
     ///
     /// Returns one [`crate::proxmox::types::VmResource`] per VM/LXC.
     /// Errors propagate as `AppError::Proxmox`.
+    ///
+    /// Bounded by `LIST_VMS_TIMEOUT_SECS` so a slow/unreachable cluster
+    /// does not stall `/api/v1/vms` indefinitely.
     pub async fn list_vms(&self) -> AppResult<Vec<crate::proxmox::types::VmResource>> {
-        self.get("cluster/resources?type=vm").await
+        match tokio::time::timeout(
+            Duration::from_secs(LIST_VMS_TIMEOUT_SECS),
+            self.get("cluster/resources?type=vm"),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_elapsed) => Err(AppError::Proxmox(format!(
+                "list_vms timed out after {LIST_VMS_TIMEOUT_SECS}s"
+            ))),
+        }
     }
 
     /// Lightweight ping — fetch `/version` to verify reachability + ticket cache.
@@ -482,5 +537,229 @@ mod tests {
         };
         let client = ProxmoxClient::new(config).await.unwrap();
         assert!(client.ping().await.is_ok());
+    }
+
+    /// End-to-end: `post()` issues a CSRF-protected state-changing call and
+    /// returns the UPID Proxmox sent back. Verifies that the CSRF header
+    /// is sent (required by Proxmox for all write operations).
+    #[tokio::test]
+    async fn test_post_with_csrf_header() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api2/json/access/ticket"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": {
+                    "ticket": "PVE:root@pam:deadbeef::SIG",
+                    "csrf_token": "csrf-token-abc",
+                    "username": "root@pam",
+                    "expires_at": 9_999_999_999_i64
+                }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/api2/json/nodes/pve11/qemu/103/status/start"))
+            .and(header("Cookie", "PVEAuthCookie=PVE:root@pam:deadbeef::SIG"))
+            .and(header("CSRFPreventionToken", "csrf-token-abc"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": "UPID:pve11:00001234:00000000:60F0EEEE:qmstart:103:root@pam:"
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let config = ClusterConfig {
+            name: "mock".to_string(),
+            url: server.uri(),
+            username: "root@pam".to_string(),
+            password: secrecy::SecretString::new("test-pw".to_string().into_boxed_str()),
+            realm: "pam".to_string(),
+            insecure_skip_verify: true,
+            ca_cert_pem: None,
+        };
+        let client = ProxmoxClient::new(config).await.unwrap();
+        let upid: String = client
+            .post("nodes/pve11/qemu/103/status/start")
+            .await
+            .unwrap();
+        assert!(upid.starts_with("UPID:pve11:"));
+    }
+}
+
+#[cfg(test)]
+mod vm_action_integration_tests {
+    //! End-to-end tests for the `vm_start`/`vm_stop`/etc. handlers.
+    //!
+    //! Spins up a wiremock Proxmox server, mounts login + action mocks,
+    //! builds a router with real audit + state, and verifies:
+    //! - the action reaches Proxmox with cookie + CSRF headers,
+    //! - the response includes the UPID,
+    //! - the audit log records the action.
+    use super::*;
+    use crate::audit::AuditStore;
+    use crate::config::{DatabaseConfig, LoggingConfig, ServerConfig};
+    use crate::state::AppState;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    async fn setup_with_mock() -> (wiremock::MockServer, AppState, std::sync::Arc<AuditStore>) {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+
+        // /access/ticket — accepts any POST.
+        Mock::given(method("POST"))
+            .and(path("/api2/json/access/ticket"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": {
+                    "ticket": "PVE:root@pam:testticket::SIG",
+                    "csrf_token": "test-csrf",
+                    "username": "root@pam",
+                    "expires_at": 9_999_999_999_i64
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        // /cluster/resources?type=vm — two VMs.
+        Mock::given(method("GET"))
+            .and(path("/api2/json/cluster/resources"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [
+                    {
+                        "vmid": 103, "name": "web-1", "node": "pve11",
+                        "status": "running", "cpu": 0.05, "cpus": 2.0,
+                        "mem": 1_073_741_824_u64, "maxmem": 2_147_483_648_u64
+                    },
+                    {
+                        "vmid": 104, "name": "db-1", "node": "pve12",
+                        "status": "stopped", "cpu": 0.0, "cpus": 4.0,
+                        "mem": 0_u64, "maxmem": 4_294_967_296_u64
+                    }
+                ]
+            })))
+            .mount(&server)
+            .await;
+
+        // /nodes/pve11/qemu/103/status/start — returns UPID.
+        Mock::given(method("POST"))
+            .and(path("/api2/json/nodes/pve11/qemu/103/status/start"))
+            .and(header(
+                "Cookie",
+                "PVEAuthCookie=PVE:root@pam:testticket::SIG",
+            ))
+            .and(header("CSRFPreventionToken", "test-csrf"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": "UPID:pve11:00001234:00000000:60F0EEEE:qmstart:103:root@pam:"
+            })))
+            .mount(&server)
+            .await;
+
+        let config = ClusterConfig {
+            name: "homelab".to_string(),
+            url: server.uri(),
+            username: "root@pam".to_string(),
+            password: secrecy::SecretString::new("test-pw".to_string().into_boxed_str()),
+            realm: "pam".to_string(),
+            insecure_skip_verify: true,
+            ca_cert_pem: None,
+        };
+        let client = ProxmoxClient::new(config).await.unwrap();
+        let audit = std::sync::Arc::new(AuditStore::open_in_memory().unwrap());
+        let app_cfg = crate::config::Config {
+            server: ServerConfig {
+                bind: "127.0.0.1:0".to_string(),
+                workers: 0,
+            },
+            database: DatabaseConfig {
+                path: ":memory:".to_string(),
+                max_connections: 1,
+                run_migrations: false,
+            },
+            logging: LoggingConfig {
+                level: "info".to_string(),
+                format: "pretty".to_string(),
+            },
+            clusters: vec![],
+        };
+        let state = AppState::new(app_cfg, vec![client], audit.clone());
+        (server, state, audit)
+    }
+
+    #[tokio::test]
+    async fn test_vm_detail_returns_404_for_missing() {
+        let (_server, state, _audit) = setup_with_mock().await;
+        let app = crate::api::router(state);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/vms/homelab/999")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_vm_detail_returns_row_for_existing() {
+        let (_server, state, _audit) = setup_with_mock().await;
+        let app = crate::api::router(state);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/vms/homelab/103")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = resp.status();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let body_str = String::from_utf8_lossy(&body_bytes);
+        eprintln!("detail status={status} body={body_str}");
+        assert_eq!(status, StatusCode::OK);
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(body["vmid"], 103);
+        assert_eq!(body["name"], "web-1");
+        assert_eq!(body["cluster"], "homelab");
+        assert_eq!(body["status"], "running");
+    }
+
+    #[tokio::test]
+    async fn test_vm_start_returns_upid_and_audits() {
+        let (_server, state, audit) = setup_with_mock().await;
+        let app = crate::api::router(state);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/vms/homelab/pve11/103/start")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(body["vmid"], 103);
+        assert_eq!(body["action"], "start");
+        assert!(body["upid"].as_str().unwrap().starts_with("UPID:pve11:"));
+
+        // Audit log captured the POST.
+        assert_eq!(audit.count().unwrap(), 1, "expected exactly 1 audit row");
     }
 }
