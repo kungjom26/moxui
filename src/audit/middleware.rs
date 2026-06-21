@@ -55,6 +55,14 @@ pub async fn audit_middleware(
     let user_agent = extract_header(&headers, axum::http::header::USER_AGENT);
 
     let start = Instant::now();
+    // If `require_auth` middleware ran before us, it stashed the JWT
+    // `Claims` in the request extensions. Pull the user id from there
+    // so audit rows are attributable. On public routes (no auth
+    // middleware) this is `None`.
+    let user_id = request
+        .extensions()
+        .get::<crate::auth::Claims>()
+        .map(|c| c.sub.clone());
     let mut response = next.run(request).await;
     // Cap duration_ms at u64::MAX — `as_millis()` returns u128, which may
     // exceed u64 range in extreme cases (≈ 585 million years of uptime).
@@ -67,6 +75,8 @@ pub async fn audit_middleware(
         response.headers_mut().insert(REQUEST_ID_HEADER, value);
     }
 
+    // (user_id was extracted from request extensions before next.run)
+
     let should_log = is_state_changing(&method) || !(200..300).contains(&status);
     if should_log {
         let entry = AuditEntry {
@@ -78,7 +88,7 @@ pub async fn audit_middleware(
             duration_ms,
             remote_addr,
             user_agent,
-            user_id: None,
+            user_id,
         };
         // Don't fail the request if audit logging fails — log to tracing.
         if let Err(e) = audit.log(&entry) {

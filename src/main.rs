@@ -7,6 +7,7 @@ use std::process::ExitCode;
 use clap::Parser;
 
 use moxui::audit::AuditStore;
+use moxui::auth::{JwtService, UserStore};
 use moxui::config::Config;
 use moxui::proxmox::ProxmoxClient;
 use moxui::state::AppState;
@@ -93,6 +94,27 @@ async fn main() -> ExitCode {
     }
     tracing::info!(count = clients.len(), "Proxmox clients built");
 
+    // Build JwtService (auth) and UserStore (seeded from config.auth.users)
+    let jwt = match build_jwt_service(&config.auth) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to build JWT service");
+            return ExitCode::from(1);
+        }
+    };
+    let users = match build_user_store(&config.auth.users) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to build user store");
+            return ExitCode::from(1);
+        }
+    };
+    tracing::info!(
+        users = users.len(),
+        jwt_issuer = %config.auth.jwt_issuer,
+        "Auth wired"
+    );
+
     // Initialize audit log store (SQLite). Uses the configured DB path with
     // a `.audit` suffix so it sits next to the main DB but is easy to find.
     let audit_path = format!("{}.audit", config.database.path);
@@ -106,7 +128,7 @@ async fn main() -> ExitCode {
     tracing::info!(path = %audit_path, "Audit log store opened");
 
     // Create application state
-    let state = AppState::new(config.clone(), clients, audit);
+    let state = AppState::new(config.clone(), clients, audit, jwt, users);
 
     // Build router
     let app = moxui::api::router(state);
@@ -129,4 +151,33 @@ async fn main() -> ExitCode {
     }
 
     ExitCode::SUCCESS
+}
+
+/// Build the [`JwtService`] from [`crate::config::AuthConfig`].
+///
+/// Reads RSA private + public keys from `jwt_private_key_pem_path` /
+/// `jwt_public_key_pem_path`. If either is missing, **refuses to start**
+/// (fail-closed) — running with auth-disabled would expose VM write
+/// endpoints to anonymous callers.
+#[allow(clippy::result_large_err)] // String is fine for startup config errors
+fn build_jwt_service(auth: &moxui::config::AuthConfig) -> Result<JwtService, String> {
+    let priv_path = auth
+        .jwt_private_key_pem_path
+        .as_ref()
+        .ok_or_else(|| "auth.jwt_private_key_pem_path is required".to_string())?;
+    let pub_path = auth
+        .jwt_public_key_pem_path
+        .as_ref()
+        .ok_or_else(|| "auth.jwt_public_key_pem_path is required".to_string())?;
+    let priv_pem = std::fs::read(priv_path).map_err(|e| format!("read {priv_path}: {e}"))?;
+    let pub_pem = std::fs::read(pub_path).map_err(|e| format!("read {pub_path}: {e}"))?;
+    JwtService::new(&priv_pem, &pub_pem, &auth.jwt_issuer, &auth.jwt_audience)
+        .map_err(|e| format!("JWT key load: {e}"))
+}
+
+/// Build the [`UserStore`] from a list of [`crate::config::UserConfig`].
+/// An empty `users` vec is allowed (no logins possible — all writes
+/// return 401).
+fn build_user_store(configs: &[moxui::config::UserConfig]) -> Result<UserStore, String> {
+    UserStore::from_configs(configs)
 }

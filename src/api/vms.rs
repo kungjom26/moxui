@@ -13,6 +13,7 @@ use axum::{
 };
 use serde::Serialize;
 
+use crate::auth::{require_role, AuthContext, Role};
 use crate::error::{AppError, AppResult};
 use crate::proxmox::types::VmResource;
 use crate::state::AppState;
@@ -139,12 +140,28 @@ pub struct VmActionResponse {
 /// `POST /api/v1/vms/:cluster/:node/:vmid/:action`
 /// VM action dispatcher (start | stop | shutdown | reboot).
 ///
+/// Requires `Operator` or higher role. Returns 401 if no/invalid token,
+/// 403 if role is too low.
+///
 /// Returns the Proxmox UPID so the caller can poll for completion.
 /// Allowed actions are whitelisted — anything else is `400 Bad Request`.
 pub async fn vm_action_handler(
     State(state): State<AppState>,
+    auth: AuthContext,
     Path((cluster, node, vmid, action)): Path<(String, String, u32, String)>,
 ) -> AppResult<Json<VmActionResponse>> {
+    // RBAC: only Operator+ can mutate VMs. require_role returns a 403
+    // Response on denial; we need to surface it as AppError::Forbidden
+    // so it composes with the rest of the handler's error type.
+    if let Err(resp) = require_role(&auth, Role::Operator) {
+        let status = resp.status();
+        let err = if status == axum::http::StatusCode::FORBIDDEN {
+            AppError::Forbidden
+        } else {
+            AppError::Internal(format!("auth middleware returned {status}"))
+        };
+        return Err(err);
+    }
     match action.as_str() {
         "start" | "stop" | "shutdown" | "reboot" => {
             vm_action(&state, &cluster, &node, vmid, &action).await

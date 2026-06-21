@@ -603,11 +603,44 @@ mod vm_action_integration_tests {
     //! - the audit log records the action.
     use super::*;
     use crate::audit::AuditStore;
-    use crate::config::{DatabaseConfig, LoggingConfig, ServerConfig};
+    use crate::auth::{Claims, JwtService, UserStore};
+    use crate::config::{AuthConfig, DatabaseConfig, LoggingConfig, ServerConfig};
     use crate::state::AppState;
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use tower::ServiceExt;
+
+    /// Mint a fresh Operator-role JWT for the test app's issuer/audience.
+    fn operator_token(jwt: &std::sync::Arc<JwtService>) -> String {
+        let now = chrono::Utc::now().timestamp();
+        let claims = Claims {
+            sub: "u-test".to_string(),
+            username: "tester".to_string(),
+            role: "operator".to_string(),
+            iat: now,
+            exp: now + 600,
+        };
+        jwt.encode(&claims).expect("encode token")
+    }
+
+    /// Build a `Request<Body>` with the `Authorization: Bearer *** header
+    /// so protected routes accept it.
+    fn authed_get(uri: &str, token: &str) -> Request<Body> {
+        Request::builder()
+            .uri(uri)
+            .header(axum::http::header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap()
+    }
+
+    fn authed_post(uri: &str, token: &str) -> Request<Body> {
+        Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header(axum::http::header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap()
+    }
 
     async fn setup_with_mock() -> (wiremock::MockServer, AppState, std::sync::Arc<AuditStore>) {
         use wiremock::matchers::{header, method, path};
@@ -689,23 +722,23 @@ mod vm_action_integration_tests {
                 format: "pretty".to_string(),
             },
             clusters: vec![],
+            auth: AuthConfig::default(),
         };
-        let state = AppState::new(app_cfg, vec![client], audit.clone());
+        let priv_pem = include_bytes!("../../tests/fixtures/test_jwt_priv.pem");
+        let pub_pem = include_bytes!("../../tests/fixtures/test_jwt_pub.pem");
+        let jwt = JwtService::new(priv_pem, pub_pem, "test", "test").expect("test jwt");
+        let state = AppState::new(app_cfg, vec![client], audit.clone(), jwt, UserStore::new());
         (server, state, audit)
     }
 
     #[tokio::test]
     async fn test_vm_detail_returns_404_for_missing() {
         let (_server, state, _audit) = setup_with_mock().await;
+        let token = operator_token(&state.jwt);
         let app = crate::api::router(state);
 
         let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri("/api/v1/vms/homelab/999")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(authed_get("/api/v1/vms/homelab/999", &token))
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
@@ -714,15 +747,11 @@ mod vm_action_integration_tests {
     #[tokio::test]
     async fn test_vm_detail_returns_row_for_existing() {
         let (_server, state, _audit) = setup_with_mock().await;
+        let token = operator_token(&state.jwt);
         let app = crate::api::router(state);
 
         let resp = app
-            .oneshot(
-                Request::builder()
-                    .uri("/api/v1/vms/homelab/103")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(authed_get("/api/v1/vms/homelab/103", &token))
             .await
             .unwrap();
         let status = resp.status();
@@ -740,16 +769,11 @@ mod vm_action_integration_tests {
     #[tokio::test]
     async fn test_vm_start_returns_upid_and_audits() {
         let (_server, state, audit) = setup_with_mock().await;
+        let token = operator_token(&state.jwt);
         let app = crate::api::router(state);
 
         let resp = app
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/api/v1/vms/homelab/pve11/103/start")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(authed_post("/api/v1/vms/homelab/pve11/103/start", &token))
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);

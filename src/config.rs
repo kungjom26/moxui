@@ -37,6 +37,9 @@ pub struct Config {
     /// Proxmox clusters to connect to.
     #[serde(default)]
     pub clusters: Vec<ClusterConfig>,
+    /// Auth configuration (JWT keys + user accounts).
+    #[serde(default)]
+    pub auth: AuthConfig,
 }
 
 /// HTTP server configuration.
@@ -87,6 +90,76 @@ fn default_log_level() -> String {
 
 fn default_log_format() -> String {
     "pretty".to_string()
+}
+
+/// Auth configuration — JWT keys + seeded user accounts.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct AuthConfig {
+    /// JWT issuer (must match between encode + decode). Default: `moxui`.
+    #[serde(default = "default_jwt_issuer")]
+    pub jwt_issuer: String,
+    /// JWT audience. Default: `moxui-clients`.
+    #[serde(default = "default_jwt_audience")]
+    pub jwt_audience: String,
+    /// Token lifetime in seconds. Default: 3600 (1h).
+    #[serde(default = "default_jwt_lifetime_secs")]
+    pub jwt_lifetime_secs: i64,
+    /// Path to PEM-encoded RSA private key. If absent, JWT-protected
+    /// endpoints will refuse to start (fail-closed).
+    #[serde(default)]
+    pub jwt_private_key_pem_path: Option<String>,
+    /// Path to PEM-encoded RSA public key. Must be set together with
+    /// `jwt_private_key_pem_path`.
+    #[serde(default)]
+    pub jwt_public_key_pem_path: Option<String>,
+    /// User accounts seeded at startup. Passwords are bcrypt hashes (or
+    /// plaintext if `password` is set — only intended for dev / first-boot).
+    #[serde(default)]
+    pub users: Vec<UserConfig>,
+}
+
+fn default_jwt_issuer() -> String {
+    "moxui".to_string()
+}
+
+fn default_jwt_audience() -> String {
+    "moxui-clients".to_string()
+}
+
+fn default_jwt_lifetime_secs() -> i64 {
+    3600
+}
+
+/// One seeded user account (yaml config).
+#[derive(Debug, Clone, Deserialize)]
+pub struct UserConfig {
+    /// Unique user id.
+    pub id: String,
+    /// Login name.
+    pub username: String,
+    /// Display name.
+    #[serde(default)]
+    pub display_name: String,
+    /// Email.
+    #[serde(default)]
+    pub email: Option<String>,
+    /// Role: `admin` / `operator` / `viewer`.
+    pub role: String,
+    /// Bcrypt hash of the password (preferred).
+    #[serde(default)]
+    pub password_hash: Option<String>,
+    /// Plaintext password — only honoured if `password_hash` is absent.
+    /// **Use only for dev / first-boot setup** — production configs
+    /// should always store a bcrypt hash.
+    #[serde(default)]
+    pub password: Option<String>,
+    /// Is this account enabled? Default: true.
+    #[serde(default = "default_true_user")]
+    pub enabled: bool,
+}
+
+fn default_true_user() -> bool {
+    true
 }
 
 /// Proxmox cluster connection.

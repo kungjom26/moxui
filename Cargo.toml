@@ -113,6 +113,18 @@ module_name_repetitions = "allow"
 must_use_candidate = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
+# `doc_markdown` is too noisy for a project that has many literal
+# identifiers in doc comments (e.g. `Bearer ***, RS256, Audience "aud-A"`).
+# We keep `pedantic` for the other useful lints.
+doc_markdown = "allow"
+# `items_after_statements` is unhelpful when test helpers (`const ... =
+# include_str!(...)`) need to come right after `use` statements.
+items_after_statements = "allow"
+# `result_large_err`: Response / String are natural error types for our
+# auth / config helpers. Boxing them for clippy's benefit would obscure
+# call sites without runtime payoff (errors propagate, never heap-allocated
+# in hot paths).
+result_large_err = "allow"
 
 # Profile configuration
 [profile.release]

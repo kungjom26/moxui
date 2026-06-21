@@ -95,8 +95,16 @@ mod tests {
     #[tokio::test]
     async fn test_router_audits_state_changing_or_non_2xx() {
         use crate::audit::AuditStore;
-        use crate::config::{DatabaseConfig, LoggingConfig, ServerConfig};
+        use crate::auth::{JwtService, UserStore};
+        use crate::config::{AuthConfig, DatabaseConfig, LoggingConfig, ServerConfig};
         use crate::state::AppState;
+
+        fn test_jwt() -> JwtService {
+            const PRIV_PEM: &str = include_str!("../../tests/fixtures/test_jwt_priv.pem");
+            const PUB_PEM: &str = include_str!("../../tests/fixtures/test_jwt_pub.pem");
+            JwtService::new(PRIV_PEM.as_bytes(), PUB_PEM.as_bytes(), "test", "test")
+                .expect("test keypair")
+        }
         use axum::body::Body;
         use axum::http::{Request, StatusCode};
         use tower::ServiceExt;
@@ -117,8 +125,19 @@ mod tests {
                 format: "pretty".to_string(),
             },
             clusters: vec![],
+            auth: AuthConfig::default(),
         };
-        let state = AppState::new(cfg, vec![], audit.clone());
+        let jwt = test_jwt();
+        let token = jwt
+            .encode(&crate::auth::Claims {
+                sub: "u-test".to_string(),
+                username: "tester".to_string(),
+                role: "viewer".to_string(),
+                iat: chrono::Utc::now().timestamp(),
+                exp: chrono::Utc::now().timestamp() + 600,
+            })
+            .expect("encode");
+        let state = AppState::new(cfg, vec![], audit.clone(), jwt, UserStore::new());
         let app = crate::api::router(state);
 
         // 1. GET /health → 200, should NOT be audited (read-only + 2xx).
@@ -141,11 +160,13 @@ mod tests {
         assert!(request_id.is_some(), "missing X-Request-Id header");
 
         // 2. GET /api/v1/vms → 200, should NOT be audited (read-only + 2xx).
+        //    The route is auth-protected — supply a valid Bearer token.
         let resp = app
             .clone()
             .oneshot(
                 Request::builder()
                     .uri("/api/v1/vms")
+                    .header(axum::http::header::AUTHORIZATION, format!("Bearer {token}"))
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -153,7 +174,10 @@ mod tests {
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
 
-        // 3. POST /api/v1/vms → 405 (no POST handler) → SHOULD be audited.
+        // 3. POST /api/v1/vms → 401 (no auth header) → SHOULD be audited.
+        //    Now that /api/v1/vms is auth-protected, the POST without
+        //    a Bearer token returns 401, which is also a non-2xx so it
+        //    still goes into the audit log.
         let resp = app
             .clone()
             .oneshot(
@@ -165,7 +189,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 
         // Verify only the non-2xx POST was audited.
         assert_eq!(audit.count().unwrap(), 1, "only one audit row should exist");
