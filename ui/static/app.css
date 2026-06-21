@@ -1,0 +1,197 @@
+/* moxui — minimal hand-rolled CSS (no Tailwind dependency).
+ *
+ * Sized for a single developer to read end-to-end. CSS variables
+ * drive the dark/light theme toggle (Day 10).
+ *
+ * Conventions:
+ *   .grid         — table with sticky header
+ *   .card         — boxed form
+ *   .badge-<x>    — colored status pill
+ *   .topbar       — fixed top nav
+ *   .clickable    — hover-highlight for clickable rows
+ */
+
+:root {
+    --bg: #f8fafc;
+    --fg: #0f172a;
+    --muted: #64748b;
+    --border: #e2e8f0;
+    --accent: #2563eb;
+    --accent-fg: #ffffff;
+    --hover: #f1f5f9;
+    --error: #dc2626;
+    --success: #16a34a;
+    --warn: #d97706;
+
+    --badge-running-bg: #dcfce7;
+    --badge-running-fg: #15803d;
+    --badge-stopped-bg: #fee2e2;
+    --badge-stopped-fg: #b91c1c;
+    --badge-paused-bg:  #fef3c7;
+    --badge-paused-fg:  #b45309;
+}
+
+:root.dark {
+    --bg: #0f172a;
+    --fg: #e2e8f0;
+    --muted: #94a3b8;
+    --border: #334155;
+    --accent: #3b82f6;
+    --accent-fg: #ffffff;
+    --hover: #1e293b;
+    --error: #f87171;
+    --success: #4ade80;
+    --warn: #fbbf24;
+
+    --badge-running-bg: #14532d;
+    --badge-running-fg: #bbf7d0;
+    --badge-stopped-bg: #7f1d1d;
+    --badge-stopped-fg: #fecaca;
+    --badge-paused-bg:  #78350f;
+    --badge-paused-fg:  #fde68a;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                 "Helvetica Neue", Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+[x-cloak] { display: none !important; }
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+button {
+    background: var(--accent);
+    color: var(--accent-fg);
+    border: 0;
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+}
+button:hover:not(:disabled) { opacity: 0.9; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+button.icon { background: transparent; color: var(--fg); padding: 0.25rem 0.5rem; }
+button.link { background: transparent; color: var(--accent); padding: 0; }
+
+input, select {
+    background: var(--bg);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    padding: 0.5rem;
+    border-radius: 6px;
+    font-size: 14px;
+    font-family: inherit;
+}
+input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+.muted { color: var(--muted); }
+.error { color: var(--error); }
+
+/* --- Login --- */
+
+main.login {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+}
+.card {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 2rem;
+    width: 360px;
+    max-width: 90vw;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+.card h1 { margin: 0 0 0.25rem 0; }
+.card label { display: block; margin-top: 1rem; }
+.card label > span { display: block; font-size: 0.875rem; color: var(--muted); margin-bottom: 0.25rem; }
+.card label > input { width: 100%; }
+.card button { width: 100%; margin-top: 1.5rem; }
+
+/* --- Topbar --- */
+
+.topbar {
+    position: sticky;
+    top: 0;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.5rem 1rem;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    z-index: 10;
+}
+.topbar .brand { font-weight: 700; font-size: 1.1rem; }
+.topbar nav { display: flex; gap: 0.5rem; }
+.topbar nav a {
+    color: var(--fg);
+    padding: 0.25rem 0.75rem;
+    border-radius: 6px;
+}
+.topbar nav a:hover { background: var(--hover); text-decoration: none; }
+.topbar nav a.active { background: var(--accent); color: var(--accent-fg); }
+.topbar .spacer { flex: 1; }
+.topbar .user { color: var(--muted); font-size: 0.875rem; }
+
+/* --- Section --- */
+
+section {
+    padding: 1.5rem;
+    max-width: 1280px;
+    margin: 0 auto;
+}
+section h2 { margin-top: 0; }
+
+/* --- Table --- */
+
+.grid {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+}
+.grid th, .grid td {
+    padding: 0.5rem 0.75rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+}
+.grid th {
+    background: var(--hover);
+    font-weight: 600;
+    font-size: 0.875rem;
+    position: sticky;
+    top: 0;
+}
+.grid tr.clickable { cursor: pointer; }
+.grid tr.clickable:hover { background: var(--hover); }
+.grid tr:last-child td { border-bottom: 0; }
+
+/* --- Status badge --- */
+
+.badge {
+    display: inline-block;
+    padding: 0.125rem 0.5rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.025em;
+}
+.badge-running { background: var(--badge-running-bg); color: var(--badge-running-fg); }
+.badge-stopped { background: var(--badge-stopped-bg); color: var(--badge-stopped-fg); }
+.badge-paused  { background: var(--badge-paused-bg);  color: var(--badge-paused-fg);  }

@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en" x-data="moxui()" x-init="init()" :class="{ 'dark': theme === 'dark' }">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <title>moxui</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📦</text></svg>" />
+    <link rel="stylesheet" href="/static/app.css" />
+</head>
+<body>
+    <!-- Login screen — shown when no token. -->
+    <main x-show="!token" class="login">
+        <form class="card" @submit.prevent="login()">
+            <h1>moxui</h1>
+            <p class="muted">Modern Proxmox management UI</p>
+            <label>
+                <span>Username</span>
+                <input x-model="loginForm.username" type="text" autocomplete="username" required autofocus />
+            </label>
+            <label>
+                <span>Password</span>
+                <input x-model="loginForm.password" type="password" autocomplete="current-password" required />
+            </label>
+            <p class="error" x-show="loginError" x-text="loginError"></p>
+            <button type="submit" :disabled="loggingIn">
+                <span x-show="!loggingIn">Sign in</span>
+                <span x-show="loggingIn">Signing in…</span>
+            </button>
+        </form>
+    </main>
+
+    <!-- Main app — shown after login. -->
+    <main x-show="token" x-cloak>
+        <header class="topbar">
+            <span class="brand">📦 moxui</span>
+            <nav>
+                <a href="#/vms" :class="{ active: route === 'vms' }">VMs</a>
+                <a href="#/lxcs" :class="{ active: route === 'lxcs' }">LXC</a>
+                <a href="#/storages" :class="{ active: route === 'storages' }">Storage</a>
+                <a href="#/networks" :class="{ active: route === 'networks' }">Network</a>
+            </nav>
+            <div class="spacer"></div>
+            <button class="icon" @click="toggleTheme()" :title="theme === 'dark' ? 'Switch to light' : 'Switch to dark'">
+                <span x-text="theme === 'dark' ? '☀' : '🌙'"></span>
+            </button>
+            <span class="user" x-text="user?.username + ' (' + user?.role + ')'"></span>
+            <button class="link" @click="logout()">Sign out</button>
+        </header>
+
+        <!-- VM list view (Day 11 will enhance this — for now a thin placeholder). -->
+        <section x-show="route === 'vms'">
+            <h2>Virtual Machines <span class="muted" x-text="'(' + (vms?.length || 0) + ')'"></span></h2>
+            <p class="muted" x-show="!vms">Loading…</p>
+            <table x-show="vms" class="grid">
+                <thead>
+                    <tr>
+                        <th>VMID</th>
+                        <th>Name</th>
+                        <th>Cluster</th>
+                        <th>Node</th>
+                        <th>Status</th>
+                        <th>CPU</th>
+                        <th>Memory</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="vm in vms" :key="vm.cluster + ':' + vm.vmid">
+                        <tr @click="openVm(vm)" class="clickable">
+                            <td x-text="vm.vmid"></td>
+                            <td x-text="vm.name || '(unnamed)'"></td>
+                            <td x-text="vm.cluster"></td>
+                            <td x-text="vm.node"></td>
+                            <td>
+                                <span class="badge" :class="'badge-' + vm.status" x-text="vm.status"></span>
+                            </td>
+                            <td x-text="vm.cpu != null ? (vm.cpu * 100).toFixed(0) + '%' : '—'"></td>
+                            <td x-text="vm.mem != null && vm.maxmem != null ? humanBytes(vm.mem) + ' / ' + humanBytes(vm.maxmem) : '—'"></td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </section>
+
+        <!-- LXC list — same shape as VM list. -->
+        <section x-show="route === 'lxcs'">
+            <h2>LXC Containers <span class="muted" x-text="'(' + (lxcs?.length || 0) + ')'"></span></h2>
+            <p class="muted" x-show="!lxcs">Loading…</p>
+            <table x-show="lxcs" class="grid">
+                <thead><tr><th>VMID</th><th>Name</th><th>Cluster</th><th>Node</th><th>Status</th></tr></thead>
+                <tbody>
+                    <template x-for="c in lxcs" :key="c.cluster + ':' + c.vmid">
+                        <tr><td x-text="c.vmid"></td><td x-text="c.name || '(unnamed)'"></td><td x-text="c.cluster"></td><td x-text="c.node"></td><td><span class="badge" :class="'badge-' + c.status" x-text="c.status"></span></td></tr>
+                    </template>
+                </tbody>
+            </table>
+        </section>
+
+        <!-- Storage list. -->
+        <section x-show="route === 'storages'">
+            <h2>Storage Pools <span class="muted" x-text="'(' + (storages?.length || 0) + ')'"></span></h2>
+            <p class="muted" x-show="!storages">Loading…</p>
+            <table x-show="storages" class="grid">
+                <thead><tr><th>Storage</th><th>Kind</th><th>Cluster</th><th>Used</th><th>Total</th></tr></thead>
+                <tbody>
+                    <template x-for="s in storages" :key="s.cluster + ':' + s.storage">
+                        <tr>
+                            <td x-text="s.storage"></td>
+                            <td x-text="s.kind"></td>
+                            <td x-text="s.cluster"></td>
+                            <td x-text="humanBytes(s.used)"></td>
+                            <td x-text="humanBytes(s.total)"></td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </section>
+
+        <!-- Network list. -->
+        <section x-show="route === 'networks'">
+            <h2>Network Interfaces <span class="muted" x-text="'(' + (networks?.length || 0) + ')'"></span></h2>
+            <p class="muted" x-show="!networks">Loading…</p>
+            <table x-show="networks" class="grid">
+                <thead><tr><th>Iface</th><th>Kind</th><th>Cluster</th><th>Address</th><th>Gateway</th></tr></thead>
+                <tbody>
+                    <template x-for="n in networks" :key="n.cluster + ':' + n.iface">
+                        <tr>
+                            <td x-text="n.iface"></td>
+                            <td x-text="n.kind"></td>
+                            <td x-text="n.cluster"></td>
+                            <td x-text="n.address || '—'"></td>
+                            <td x-text="n.gateway || '—'"></td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </section>
+
+        <!-- VM detail (placeholder for Day 12). -->
+        <section x-show="route === 'vm-detail' && selectedVm">
+            <h2>VM <span x-text="selectedVm?.vmid + ' — ' + (selectedVm?.name || '(unnamed)')"></span></h2>
+            <p class="muted">Detail view is coming in Day 12. (cluster=<span x-text="selectedVm?.cluster"></span>, node=<span x-text="selectedVm?.node"></span>, status=<span x-text="selectedVm?.status"></span>)</p>
+            <button @click="route = 'vms'">← Back to list</button>
+        </section>
+    </main>
+
+    <script src="/static/vendor/alpine.min.js" defer></script>
+    <script src="/static/app.js"></script>
+</body>
+</html>

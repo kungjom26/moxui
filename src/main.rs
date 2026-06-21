@@ -133,7 +133,10 @@ async fn main() -> ExitCode {
     // Create application state
     let state = AppState::new(config.clone(), clients, audit, jwt, users);
 
-    // Build router
+    // Build router — API + UI are merged inside `api::router` so the
+    // security-headers layer covers both with a single application.
+    // UI serves `/` and `/static/*` (SPA shell + embedded assets) and
+    // is public; auth still applies to `/api/v1/*` via the inner layer.
     let app = moxui::api::router(state);
 
     // Bind and serve (HTTPS if server.tls is configured, plaintext HTTP otherwise)

@@ -63,6 +63,7 @@ pub fn router(state: AppState) -> Router {
 
     public
         .merge(protected)
+        .merge(crate::ui::router::<crate::state::AppState>())
         .layer(from_fn_with_state(
             state.clone(),
             crate::audit::audit_middleware,
@@ -71,15 +72,12 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
-/// Middleware that adds production security headers to every response.
-///
-/// Headers (only set when not already present, so handlers can override):
-/// - `Strict-Transport-Security: max-age=31536000; includeSubDomains`
-/// - `X-Content-Type-Options: nosniff`
-/// - `X-Frame-Options: DENY`
-/// - `Referrer-Policy: no-referrer`
-/// - `Content-Security-Policy: default-src 'self'`
-async fn security_headers_middleware(
+/// Security headers middleware — exposed as `pub` so the merged
+/// API+UI router (built in `main.rs`) can apply it to UI responses
+/// too. Without this, `/`, `/static/*` etc. would not get the
+/// HSTS / X-Content-Type-Options / X-Frame-Options / Referrer-Policy
+/// / CSP headers that the API endpoints receive.
+pub async fn security_headers_middleware(
     request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
