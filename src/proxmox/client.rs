@@ -76,6 +76,63 @@ impl ProxmoxClient {
         &self.config.url
     }
 
+    /// Alias for [`Self::url`] — kept separate because the VNC WS
+    /// proxy uses it heavily and `base_url` reads more naturally in
+    /// that context.
+    #[must_use]
+    pub fn base_url(&self) -> &str {
+        &self.config.url
+    }
+
+    /// Build a rustls `ClientConfig` that mirrors the Proxmox HTTP
+    /// client's TLS settings (CA cert + insecure-skip-verify).
+    ///
+    /// Used by the VNC WebSocket proxy so the upstream TLS
+    /// configuration matches what ProxmoxClient itself uses. If
+    /// `insecure_skip_verify` is set, we install a no-op verifier
+    /// (same trade-off as the HTTP client).
+    ///
+    /// NOTE on CA cert handling: we deliberately avoid
+    /// `rustls-pemfile` (RUSTSEC-2025-0134 — unmaintained). The
+    /// upstream CA must be in the system trust store, or the
+    /// operator sets `insecure_skip_verify: true`. This is a
+    /// conscious trade-off documented in `Cargo.toml`.
+    #[must_use]
+    pub fn tls_connector(&self) -> Option<Arc<rustls::ClientConfig>> {
+        // rustls 0.23 needs an Arc<CryptoProvider> + an explicit root
+        // store to transition through the builder state machine.
+        // We use the platform/webpki roots for normal mode and
+        // short-circuit to the no-op verifier when the operator has
+        // opted into `insecure_skip_verify`.
+        //
+        // If no default provider is installed we fall back to aws_lc_rs.
+        // We never want this to fail because the VNC WS upgrade
+        // pathway is opt-in (operator must set
+        // `auth.vnc_token_secret_pem_path` to enable it).
+        let provider: Arc<rustls::crypto::CryptoProvider> =
+            match rustls::crypto::CryptoProvider::get_default() {
+                Some(arc) => arc.clone(),
+                None => Arc::new(rustls::crypto::aws_lc_rs::default_provider()),
+            };
+        let builder = rustls::ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .ok()?;
+        let config = if self.config.insecure_skip_verify {
+            builder
+                .dangerous()
+                .with_custom_certificate_verifier(Arc::new(NoCertVerifier))
+                .with_no_client_auth()
+        } else {
+            // Use the webpki-roots bundle. For private CAs operators
+            // should either install the cert in the OS trust store or
+            // set `insecure_skip_verify: true` for the cluster.
+            let mut roots = rustls::RootCertStore::empty();
+            roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+            builder.with_root_certificates(roots).with_no_client_auth()
+        };
+        Some(Arc::new(config))
+    }
+
     /// Get the cluster name.
     pub fn name(&self) -> &str {
         &self.config.name
@@ -274,6 +331,40 @@ impl ProxmoxClient {
         self.handle_response::<T>(resp).await
     }
 
+    /// Same as `post_with_query` but without the `Default` bound.
+    ///
+    /// Needed for response types that wrap fields in `SecretString`
+    /// (VNC proxy tickets) — `SecretString` deliberately doesn't
+    /// implement `Default` so a missing ticket can't be silently
+    /// represented as empty.
+    pub async fn post_no_default<T>(
+        &self,
+        path: &str,
+        params: Vec<(String, String)>,
+    ) -> AppResult<T>
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        let ticket = self.current_ticket().await?;
+        let url = self.build_url(path);
+        let fut = self
+            .http
+            .post(&url)
+            .query(&params)
+            .header("Cookie", format!("PVEAuthCookie={}", ticket.ticket))
+            .header("CSRFPreventionToken", &ticket.csrf_token)
+            .send();
+        let resp = match tokio::time::timeout(Duration::from_secs(POST_TIMEOUT_SECS), fut).await {
+            Ok(result) => result?,
+            Err(_elapsed) => {
+                return Err(AppError::Proxmox(format!(
+                    "POST {path} timed out after {POST_TIMEOUT_SECS}s"
+                )))
+            }
+        };
+        self.handle_response::<T>(resp).await
+    }
+
     /// Delete a QEMU VM.
     ///
     /// Proxmox endpoint: `POST /nodes/{node}/qemu/{vmid}` (Proxmox uses
@@ -344,6 +435,31 @@ impl ProxmoxClient {
         // not the right tool for path segments.
         let path = format!("nodes/{node}/tasks/{upid}/status");
         self.get(&path).await
+    }
+
+    /// Request a VNC proxy ticket + port from Proxmox.
+    ///
+    /// Proxmox endpoint: `POST /nodes/{node}/qemu/{vmid}/vncproxy`.
+    /// Returns a short-lived `ticket` (one-shot) and the `port` to
+    /// connect the VNC WebSocket to. The ticket is consumed by the
+    /// next WebSocket connection — do not reuse or log it.
+    ///
+    /// We don't model the response as a `VmConfig`-style struct
+    /// because Proxmox returns the Proxmox-specific ticket format
+    /// (`PVEVNC:{base64(...)})` and we want to pass the raw strings
+    /// through without leaking them through Debug derives.
+    pub async fn vnc_proxy(
+        &self,
+        node: &str,
+        vmid: u32,
+    ) -> AppResult<crate::proxmox::types::VncProxyTicket> {
+        // Proxmox's vncproxy endpoint is POST with no body and returns
+        // a JSON object — `post_no_default` fits perfectly with an
+        // empty params vec. We can't use `post<T>` because it requires
+        // `Default` and our ticket type wraps the field in `SecretString`
+        // (which doesn't impl `Default`).
+        let path = format!("nodes/{node}/qemu/{vmid}/vncproxy");
+        self.post_no_default(&path, Vec::new()).await
     }
 
     /// Record success (reset circuit breaker).
@@ -1069,7 +1185,14 @@ mod vm_action_integration_tests {
         let priv_pem = include_bytes!("../../tests/fixtures/test_jwt_priv.pem");
         let pub_pem = include_bytes!("../../tests/fixtures/test_jwt_pub.pem");
         let jwt = JwtService::new(priv_pem, pub_pem, "test", "test").expect("test jwt");
-        let state = AppState::new(app_cfg, vec![client], audit.clone(), jwt, UserStore::new());
+        let state = AppState::new(
+            app_cfg,
+            vec![client],
+            audit.clone(),
+            jwt,
+            UserStore::new(),
+            None,
+        );
         (server, state, audit)
     }
 
@@ -1463,5 +1586,51 @@ mod vm_action_integration_tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+}
+
+// ── TLS helpers ───────────────────────────────────────────────────
+
+/// rustls server-cert verifier that accepts every certificate.
+///
+/// Only installed when the operator has set `insecure_skip_verify: true`
+/// on the cluster config — same trade-off the upstream Proxmox HTTP
+/// client makes, so VNC works in lab/test envs where TLS isn't fully
+/// set up. Real clusters should leave `insecure_skip_verify: false`
+/// and rely on the system trust roots.
+#[derive(Debug)]
+pub struct NoCertVerifier;
+
+impl rustls::client::danger::ServerCertVerifier for NoCertVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        rustls::crypto::aws_lc_rs::default_provider()
+            .signature_verification_algorithms
+            .supported_schemes()
     }
 }

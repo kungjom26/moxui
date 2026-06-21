@@ -137,6 +137,12 @@ pub struct AuthConfig {
     /// plaintext if `password` is set — only intended for dev / first-boot).
     #[serde(default)]
     pub users: Vec<UserConfig>,
+    /// HMAC secret used to sign short-lived VNC session tokens.
+    /// Required when the VNC endpoint is enabled — the server
+    /// fails closed if it's absent. Minimum 32 bytes recommended.
+    /// Path is read at startup; secret lives in process memory only.
+    #[serde(default)]
+    pub vnc_token_secret_pem_path: Option<String>,
 }
 
 fn default_jwt_issuer() -> String {

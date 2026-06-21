@@ -16,6 +16,7 @@ pub mod jwt;
 pub mod middleware;
 pub mod password;
 pub mod user;
+pub mod vnc;
 
 pub use jwt::{Claims, JwtService};
 pub use middleware::{require_auth, require_role, AuthContext};

@@ -3,8 +3,64 @@
 //! Each struct corresponds to a Proxmox API endpoint response.
 //! See `https://pve.proxmox.com/pve-docs/api-viewer/` for the raw JSON.
 
+use secrecy::SecretString;
 use serde::{Deserialize, Serialize};
 
+/// One-shot VNC proxy ticket + port (from `POST /nodes/{node}/qemu/{vmid}/vncproxy`).
+///
+/// The ticket is consumed by the next WebSocket connection and must
+/// not be reused or logged. We wrap both fields in `SecretString` so
+/// that accidental Debug logging doesn't leak them — `tracing` and
+/// `panic` messages both honor `Debug` and would otherwise print the
+/// raw `PVEVNC:...` token.
+#[derive(Debug)]
+pub struct VncProxyTicket {
+    /// Short-lived ticket string (e.g. `PVEVNC:...`). One-shot.
+    pub ticket: SecretString,
+    /// TCP port to connect the VNC WebSocket to (relative to the node).
+    pub port: u16,
+    /// UPID of the vncproxy task (kept for audit / log correlation;
+    /// ticket itself is what we hand to the WS upgrade).
+    pub upid: String,
+}
+
+impl Clone for VncProxyTicket {
+    fn clone(&self) -> Self {
+        use secrecy::ExposeSecret;
+        Self {
+            ticket: SecretString::new(self.ticket.expose_secret().to_string().into_boxed_str()),
+            port: self.port,
+            upid: self.upid.clone(),
+        }
+    }
+}
+
+// serde::Deserialize for the wire format — we read the raw fields
+// from Proxmox and immediately box them into SecretString so the
+// plaintext only lives in SecretString's heap allocation.
+impl<'de> Deserialize<'de> for VncProxyTicket {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Raw {
+            ticket: String,
+            port: u16,
+            upid: String,
+        }
+        let raw = Raw::deserialize(deserializer)?;
+        Ok(VncProxyTicket {
+            ticket: SecretString::new(raw.ticket.into_boxed_str()),
+            port: raw.port,
+            upid: raw.upid,
+        })
+    }
+}
+
+// We don't implement Serialize — these never go back out over JSON
+// (the ticket is forwarded to the WS proxy in-process). The compile
+// error if anything tries to serialize acts as a useful guardrail.
 /// QEMU VM configuration (from `/nodes/{node}/qemu/{vmid}/config`).
 ///
 /// This is the editable VM spec — cores, memory, disks, NICs, boot

@@ -6,7 +6,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use tokio::sync::RwLock;
+use secrecy::SecretBox;
+use tokio::sync::{Mutex, RwLock};
 
 use crate::audit::AuditStore;
 use crate::auth::{JwtService, UserStore};
@@ -66,6 +67,18 @@ pub struct AppState {
     pub jwt: Arc<JwtService>,
     /// In-memory user store. Cheap to clone (`Arc` inside).
     pub users: Arc<UserStore>,
+    /// HMAC secret used to mint + verify short-lived VNC tokens.
+    /// `None` when VNC is disabled (operator opted out by not setting
+    /// `auth.vnc_token_secret_pem_path` in the config); the VNC
+    /// endpoints then return `404 Not Found` rather than 401, so they
+    /// don't advertise an attack surface that isn't configured.
+    pub vnc_secret: Option<Arc<SecretBox<Vec<u8>>>>,
+    /// Per-VM concurrency limiters for the VNC WebSocket proxy.
+    /// Lazily inserted on first connection; survives for the process
+    /// lifetime. Key format: `"<cluster>:<node>:<vmid>"`. We use
+    /// `tokio::sync::Mutex` because entries are short-lived (the
+    /// `entry().or_insert_with` pattern) and contention is low.
+    pub vnc_limiters: Arc<Mutex<HashMap<String, Arc<crate::api::vnc::VncConnectionLimiter>>>>,
 }
 
 impl AppState {
@@ -73,12 +86,14 @@ impl AppState {
     ///
     /// Build the `Vec<ProxmoxClient>` ahead of time (e.g. in `main`) so
     /// handler timeouts/failures happen at startup, not on first request.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         config: Config,
         clients: Vec<ProxmoxClient>,
         audit: Arc<AuditStore>,
         jwt: JwtService,
         users: UserStore,
+        vnc_secret: Option<SecretBox<Vec<u8>>>,
     ) -> Self {
         Self {
             config: Arc::new(config),
@@ -87,7 +102,16 @@ impl AppState {
             audit,
             jwt: Arc::new(jwt),
             users: Arc::new(users),
+            vnc_secret: vnc_secret.map(Arc::new),
+            vnc_limiters: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Returns `true` when the VNC endpoint is configured (operator
+    /// supplied `auth.vnc_token_secret_pem_path` at startup).
+    #[must_use]
+    pub fn vnc_enabled(&self) -> bool {
+        self.vnc_secret.is_some()
     }
 
     /// Look up a Proxmox client by cluster name.
@@ -191,10 +215,18 @@ mod tests {
     #[tokio::test]
     async fn test_state_creation_empty() {
         let audit = std::sync::Arc::new(crate::audit::AuditStore::open_in_memory().unwrap());
-        let state = AppState::new(test_config(), vec![], audit, test_jwt(), UserStore::new());
+        let state = AppState::new(
+            test_config(),
+            vec![],
+            audit,
+            test_jwt(),
+            UserStore::new(),
+            None,
+        );
         assert_eq!(state.config.server.bind, "0.0.0.0:8080");
         assert_eq!(state.clients.len(), 0);
         assert!(state.client("anything").is_none());
+        assert!(!state.vnc_enabled());
     }
 
     #[tokio::test]
@@ -221,7 +253,7 @@ mod tests {
         let c1 = ProxmoxClient::new(cluster1).await.unwrap();
         let c2 = ProxmoxClient::new(cluster2).await.unwrap();
         let audit = std::sync::Arc::new(crate::audit::AuditStore::open_in_memory().unwrap());
-        let state = AppState::new(cfg, vec![c1, c2], audit, test_jwt(), UserStore::new());
+        let state = AppState::new(cfg, vec![c1, c2], audit, test_jwt(), UserStore::new(), None);
 
         assert_eq!(state.clients.len(), 2);
         assert!(state.client("homelab").is_some());
@@ -233,7 +265,14 @@ mod tests {
     #[tokio::test]
     async fn test_readiness_with_no_clusters_is_ready() {
         let audit = std::sync::Arc::new(crate::audit::AuditStore::open_in_memory().unwrap());
-        let state = AppState::new(test_config(), vec![], audit, test_jwt(), UserStore::new());
+        let state = AppState::new(
+            test_config(),
+            vec![],
+            audit,
+            test_jwt(),
+            UserStore::new(),
+            None,
+        );
         let snap = state.readiness().await;
         assert!(snap.all_healthy(), "empty cluster list should be ready");
         assert_eq!(snap.clusters.len(), 0);

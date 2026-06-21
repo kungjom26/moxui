@@ -5,6 +5,7 @@
 use std::process::ExitCode;
 
 use clap::Parser;
+use secrecy::SecretBox;
 
 use moxui::audit::AuditStore;
 use moxui::auth::{JwtService, UserStore};
@@ -29,6 +30,7 @@ struct Cli {
 }
 
 #[tokio::main]
+#[allow(clippy::too_many_lines)]
 async fn main() -> ExitCode {
     let cli = Cli::parse();
 
@@ -130,8 +132,25 @@ async fn main() -> ExitCode {
     };
     tracing::info!(path = %audit_path, "Audit log store opened");
 
+    // Load VNC HMAC secret (optional). When `auth.vnc_token_secret_pem_path`
+    // is set we load the file as raw bytes and wrap it in `Secret` so
+    // Debug/Display dumps never leak it. When unset, the VNC endpoints
+    // become a 404 — that's the documented opt-out.
+    let vnc_secret = match load_vnc_secret(&config.auth) {
+        Ok(secret) => secret,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to load VNC secret");
+            return ExitCode::from(1);
+        }
+    };
+    if vnc_secret.is_some() {
+        tracing::info!("VNC console enabled");
+    } else {
+        tracing::info!("VNC console disabled (auth.vnc_token_secret_pem_path not set)");
+    }
+
     // Create application state
-    let state = AppState::new(config.clone(), clients, audit, jwt, users);
+    let state = AppState::new(config.clone(), clients, audit, jwt, users, vnc_secret);
 
     // Build router — API + UI are merged inside `api::router` so the
     // security-headers layer covers both with a single application.
@@ -184,4 +203,39 @@ fn build_jwt_service(auth: &moxui::config::AuthConfig) -> Result<JwtService, Str
 /// return 401).
 fn build_user_store(configs: &[moxui::config::UserConfig]) -> Result<UserStore, String> {
     UserStore::from_configs(configs)
+}
+
+/// Load the VNC HMAC secret from `auth.vnc_token_secret_pem_path`.
+///
+/// The file is read as raw bytes (we don't parse it as PEM — the
+/// secret is opaque key material, not a certificate). Returns
+/// `Ok(None)` when the path is unset (VNC disabled — endpoints will
+/// respond 404). Returns `Err` when the path is set but the file is
+/// missing/unreadable (fail-closed — half-configured VNC is worse
+/// than no VNC).
+///
+/// We refuse to start when an empty file is loaded too: a zero-byte
+/// secret is trivially brute-forceable and we don't want a silent
+/// misconfiguration to weaken token signing.
+fn load_vnc_secret(auth: &moxui::config::AuthConfig) -> Result<Option<SecretBox<Vec<u8>>>, String> {
+    let Some(path) = auth.vnc_token_secret_pem_path.as_ref() else {
+        return Ok(None);
+    };
+    let bytes = std::fs::read(path).map_err(|e| format!("read {path}: {e}"))?;
+    if bytes.is_empty() {
+        return Err(format!(
+            "{path} is empty — refusing to use a zero-length VNC secret"
+        ));
+    }
+    if bytes.len() < 32 {
+        // 32 bytes = 256 bits, matches the HMAC-SHA256 block size.
+        // We log the length but never the contents.
+        tracing::warn!(
+            path = %path,
+            bytes = bytes.len(),
+            "VNC secret is shorter than 32 bytes — HMAC-SHA256 is \
+             still secure but consider a longer key for defense in depth"
+        );
+    }
+    Ok(Some(SecretBox::new(Box::new(bytes))))
 }

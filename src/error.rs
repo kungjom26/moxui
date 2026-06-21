@@ -22,16 +22,25 @@ pub enum AppError {
     BadRequest(String),
 
     /// Unauthorized (HTTP 401).
-    #[error("Unauthorized")]
-    Unauthorized,
+    ///
+    /// Holds an internal-only reason string. The HTTP response is
+    /// always a generic `"Unauthorized"` so we don't leak which auth
+    /// gate rejected the caller — the reason is logged server-side
+    /// via the `tracing` integration when this becomes a response.
+    #[error("Unauthorized: {0}")]
+    Unauthorized(String),
 
-    /// Forbidden (HTTP 403).
-    #[error("Forbidden")]
-    Forbidden,
+    /// Forbidden (HTTP 403). Same log-vs-response split as `Unauthorized`.
+    #[error("Forbidden: {0}")]
+    Forbidden(String),
 
     /// Conflict (HTTP 409).
     #[error("Conflict: {0}")]
     Conflict(String),
+
+    /// Too many requests (HTTP 429).
+    #[error("Too many requests: {0}")]
+    TooManyRequests(String),
 
     /// Proxmox API error.
     #[error("Proxmox error: {0}")]
@@ -52,12 +61,26 @@ pub enum AppError {
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
+        // Log the reason for auth failures server-side before we
+        // strip it from the response. This is the one place we get
+        // to see *why* a token was rejected without leaking that
+        // information back to the caller.
+        if let AppError::Unauthorized(reason) = &self {
+            tracing::debug!(reason = %reason, "auth rejected");
+        }
+        if let AppError::Forbidden(reason) = &self {
+            tracing::debug!(reason = %reason, "auth forbidden");
+        }
         let (status, message) = match &self {
             AppError::NotFound(_) => (StatusCode::NOT_FOUND, self.to_string()),
             AppError::BadRequest(_) => (StatusCode::BAD_REQUEST, self.to_string()),
-            AppError::Unauthorized => (StatusCode::UNAUTHORIZED, "Unauthorized".to_string()),
-            AppError::Forbidden => (StatusCode::FORBIDDEN, "Forbidden".to_string()),
+            // Auth: reason stays server-side, caller sees a fixed
+            // generic message so probe traffic can't distinguish
+            // "token expired" from "token invalid" from "missing".
+            AppError::Unauthorized(_) => (StatusCode::UNAUTHORIZED, "Unauthorized".to_string()),
+            AppError::Forbidden(_) => (StatusCode::FORBIDDEN, "Forbidden".to_string()),
             AppError::Conflict(_) => (StatusCode::CONFLICT, self.to_string()),
+            AppError::TooManyRequests(_) => (StatusCode::TOO_MANY_REQUESTS, self.to_string()),
             AppError::Proxmox(_)
             | AppError::Database(_)
             | AppError::Config(_)

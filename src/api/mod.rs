@@ -7,6 +7,7 @@ pub mod networks;
 pub mod storages;
 pub mod tasks;
 pub mod vms;
+pub mod vnc;
 
 use axum::{
     middleware::from_fn_with_state,
@@ -29,6 +30,8 @@ use crate::state::AppState;
 /// - `GET  /api/v1/vms/:cluster/:vmid`       — single VM detail
 /// - `POST /api/v1/vms/:cluster/:node/:vmid/:action` — VM actions
 ///   (auth required, Operator+ role, `action` ∈ `start`|`stop`|`shutdown`|`reboot`)
+/// - `POST /api/v1/vms/:cluster/:node/:vmid/vnc/ticket` — mint short-lived VNC token
+/// - `GET  /api/v1/vms/:cluster/:node/:vmid/vnc/ws`   — WebSocket upgrade
 ///
 /// Uses `:param` syntax (axum 0.7) — `{param}` style requires axum 0.8.
 pub fn router(state: AppState) -> Router {
@@ -67,6 +70,14 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v1/tasks/:cluster/:node/:upid",
             get(tasks::task_status),
+        )
+        .route(
+            "/api/v1/vms/:cluster/:node/:vmid/vnc/ticket",
+            post(vnc::vnc_ticket_handler),
+        )
+        .route(
+            "/api/v1/vms/:cluster/:node/:vmid/vnc/ws",
+            get(vnc::vnc_ws_handler),
         )
         .route_layer(from_fn_with_state(state.clone(), require_auth));
 

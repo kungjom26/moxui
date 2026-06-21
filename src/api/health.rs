@@ -138,7 +138,7 @@ mod tests {
                 exp: chrono::Utc::now().timestamp() + 600,
             })
             .expect("encode");
-        let state = AppState::new(cfg, vec![], audit.clone(), jwt, UserStore::new());
+        let state = AppState::new(cfg, vec![], audit.clone(), jwt, UserStore::new(), None);
         let app = crate::api::router(state);
 
         // 1. GET /health → 200, should NOT be audited (read-only + 2xx).
