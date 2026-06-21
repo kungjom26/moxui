@@ -202,6 +202,23 @@ impl ProxmoxClient {
     pub fn record_failure(&self) {
         self.circuit_breaker.record_failure();
     }
+
+    /// List all VMs/LXC across the cluster via `/cluster/resources?type=vm`.
+    ///
+    /// Returns one [`crate::proxmox::types::VmResource`] per VM/LXC.
+    /// Errors propagate as `AppError::Proxmox`.
+    pub async fn list_vms(&self) -> AppResult<Vec<crate::proxmox::types::VmResource>> {
+        self.get("cluster/resources?type=vm").await
+    }
+
+    /// Lightweight ping — fetch `/version` to verify reachability + ticket cache.
+    ///
+    /// Returns `Ok(())` on any 2xx (ticket can be acquired AND version returns).
+    /// On failure, the circuit breaker is updated.
+    pub async fn ping(&self) -> AppResult<()> {
+        let _: crate::proxmox::types::Version = self.get("version").await?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -318,5 +335,134 @@ mod tests {
         let v: crate::proxmox::types::Version = client.get("version").await.unwrap();
         assert_eq!(v.version, "8.2.4");
         assert_eq!(v.release, "8.2");
+    }
+
+    /// End-to-end: verify `list_vms()` returns parsed `VmResource` rows from
+    /// Proxmox `/cluster/resources?type=vm`.
+    #[tokio::test]
+    async fn test_list_vms_against_wiremock() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api2/json/access/ticket"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": {
+                    "ticket": "PVE:root@pam:deadbeef::SIG",
+                    "csrf_token": "csrf-token-abc",
+                    "username": "root@pam",
+                    "expires_at": 9_999_999_999_i64
+                }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/api2/json/cluster/resources"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [
+                    {
+                        "vmid": 100,
+                        "name": "web-1",
+                        "node": "pve11",
+                        "status": "running",
+                        "cpu": 0.05,
+                        "cpus": 2.0,
+                        "mem": 1_073_741_824_u64,
+                        "maxmem": 2_147_483_648_u64,
+                        "uptime": 3600,
+                        "tags": "prod;web"
+                    },
+                    {
+                        "vmid": 101,
+                        "name": "db-1",
+                        "node": "pve12",
+                        "status": "stopped",
+                        "cpu": 0.0,
+                        "cpus": 4.0,
+                        "mem": 0_u64,
+                        "maxmem": 4_294_967_296_u64,
+                        "tags": null
+                    }
+                ]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let config = ClusterConfig {
+            name: "mock".to_string(),
+            url: server.uri(),
+            username: "root@pam".to_string(),
+            password: secrecy::SecretString::new("test-pw".to_string().into_boxed_str()),
+            realm: "pam".to_string(),
+            insecure_skip_verify: true,
+            ca_cert_pem: None,
+        };
+        let client = ProxmoxClient::new(config).await.unwrap();
+        let vms = client.list_vms().await.unwrap();
+        assert_eq!(vms.len(), 2);
+
+        assert_eq!(vms[0].vmid, 100);
+        assert_eq!(vms[0].name, "web-1");
+        assert_eq!(vms[0].status, "running");
+        assert_eq!(vms[0].node, "pve11");
+        assert_eq!(vms[0].tags.as_deref(), Some("prod;web"));
+
+        assert_eq!(vms[1].vmid, 101);
+        assert_eq!(vms[1].name, "db-1");
+        assert_eq!(vms[1].status, "stopped");
+        assert_eq!(vms[1].tags, None);
+    }
+
+    /// End-to-end: `ping()` succeeds when the cluster is reachable.
+    #[tokio::test]
+    async fn test_ping_succeeds_against_wiremock() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api2/json/access/ticket"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": {
+                    "ticket": "PVE:root@pam:deadbeef::SIG",
+                    "csrf_token": "csrf-token-abc",
+                    "username": "root@pam",
+                    "expires_at": 9_999_999_999_i64
+                }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/api2/json/version"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": {
+                    "version": "8.2.4",
+                    "release": "8.2",
+                    "repoid": "deadbeef"
+                }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let config = ClusterConfig {
+            name: "mock".to_string(),
+            url: server.uri(),
+            username: "root@pam".to_string(),
+            password: secrecy::SecretString::new("test-pw".to_string().into_boxed_str()),
+            realm: "pam".to_string(),
+            insecure_skip_verify: true,
+            ca_cert_pem: None,
+        };
+        let client = ProxmoxClient::new(config).await.unwrap();
+        assert!(client.ping().await.is_ok());
     }
 }
