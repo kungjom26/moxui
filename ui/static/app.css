@@ -195,3 +195,49 @@ section h2 { margin-top: 0; }
 .badge-running { background: var(--badge-running-bg); color: var(--badge-running-fg); }
 .badge-stopped { background: var(--badge-stopped-bg); color: var(--badge-stopped-fg); }
 .badge-paused  { background: var(--badge-paused-bg);  color: var(--badge-paused-fg);  }
+
+/* --- Day 11 — VM list enhancements --- */
+
+.section-head {
+    display: flex;
+    align-items: baseline;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+.section-head h2 { margin: 0; }
+.section-head .meta {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 0.875rem;
+}
+.section-head .meta .ok   { color: var(--success); }
+.section-head .meta .warn { color: var(--warn); font-weight: 600; }
+
+.toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+.toolbar .search {
+    flex: 1;
+    min-width: 240px;
+    padding: 0.5rem 0.75rem;
+}
+.toolbar select {
+    padding: 0.5rem;
+    min-width: 8rem;
+}
+
+.grid th.sortable {
+    cursor: pointer;
+    user-select: none;
+}
+.grid th.sortable:hover { background: var(--accent); color: var(--accent-fg); }
+.grid th.sortable.active { background: var(--accent); color: var(--accent-fg); }
+.grid th.num, .grid td.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+.grid tr.stale td { opacity: 0.6; }

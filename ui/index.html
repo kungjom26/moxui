@@ -48,25 +48,94 @@
             <button class="link" @click="logout()">Sign out</button>
         </header>
 
-        <!-- VM list view (Day 11 will enhance this — for now a thin placeholder). -->
+        <!-- VM list view (Day 11 — search/sort/filter/polling/stale/error). -->
         <section x-show="route === 'vms'">
-            <h2>Virtual Machines <span class="muted" x-text="'(' + (vms?.length || 0) + ')'"></span></h2>
-            <p class="muted" x-show="!vms">Loading…</p>
-            <table x-show="vms" class="grid">
+            <header class="section-head">
+                <h2>Virtual Machines
+                    <span class="muted" x-text="'(' + (vms?.length || 0) + ' total, ' + sortedVms.length + ' shown)'"></span>
+                </h2>
+                <div class="meta">
+                    <span x-show="vmsLastUpdated && !vmsAreStale" class="ok"
+                          x-text="'Updated ' + relativeTime(vmsLastUpdated)"></span>
+                    <span x-show="vmsAreStale" class="warn"
+                          title="No successful fetch for &gt; 5s">stale</span>
+                    <button class="link" @click="fetchVms()" title="Refresh now">↻</button>
+                </div>
+            </header>
+
+            <!-- Status / error banner (per-cluster errors from backend, plus transport errors). -->
+            <p class="error" x-show="vmsError" x-text="vmsError.message"></p>
+
+            <!-- Filter toolbar: search box + status/cluster/node chips. -->
+            <div class="toolbar" x-show="vms">
+                <input type="search" x-model="vmFilter.search" placeholder="🔍 Search VMID, name, tag, node, cluster"
+                       class="search" />
+                <select x-model="vmFilter.status" title="Filter by status">
+                    <option value="">All statuses</option>
+                    <option value="running">running</option>
+                    <option value="stopped">stopped</option>
+                    <option value="paused">paused</option>
+                </select>
+                <select x-model="vmFilter.cluster" title="Filter by cluster"
+                        @change="vmFilter.node = ''">
+                    <option value="">All clusters</option>
+                    <template x-for="c in distinctClusters" :key="c">
+                        <option :value="c" x-text="c"></option>
+                    </template>
+                </select>
+                <select x-model="vmFilter.node" title="Filter by node">
+                    <option value="">All nodes</option>
+                    <template x-for="n in distinctNodes" :key="n">
+                        <option :value="n" x-text="n"></option>
+                    </template>
+                </select>
+                <button class="link" @click="clearVmFilters()"
+                        x-show="vmFilter.search || vmFilter.status || vmFilter.cluster || vmFilter.node">
+                    Clear filters
+                </button>
+            </div>
+
+            <p class="muted" x-show="vms === null">Loading…</p>
+
+            <!-- Empty state: no VMs at all, or no matches after filtering. -->
+            <p class="muted" x-show="vms && vms.length === 0">No VMs reported by any cluster.</p>
+            <p class="muted" x-show="vms && vms.length > 0 && sortedVms.length === 0">
+                No VMs match the current filters.
+            </p>
+
+            <table x-show="vms && sortedVms.length > 0" class="grid">
                 <thead>
                     <tr>
-                        <th>VMID</th>
-                        <th>Name</th>
-                        <th>Cluster</th>
-                        <th>Node</th>
-                        <th>Status</th>
-                        <th>CPU</th>
-                        <th>Memory</th>
+                        <th @click="sortBy('vmid')" class="sortable" :class="{ active: vmSort.key === 'vmid' }">
+                            VMID<span x-text="sortIndicator('vmid')"></span>
+                        </th>
+                        <th @click="sortBy('name')" class="sortable" :class="{ active: vmSort.key === 'name' }">
+                            Name<span x-text="sortIndicator('name')"></span>
+                        </th>
+                        <th @click="sortBy('cluster')" class="sortable" :class="{ active: vmSort.key === 'cluster' }">
+                            Cluster<span x-text="sortIndicator('cluster')"></span>
+                        </th>
+                        <th @click="sortBy('node')" class="sortable" :class="{ active: vmSort.key === 'node' }">
+                            Node<span x-text="sortIndicator('node')"></span>
+                        </th>
+                        <th @click="sortBy('status')" class="sortable" :class="{ active: vmSort.key === 'status' }">
+                            Status<span x-text="sortIndicator('status')"></span>
+                        </th>
+                        <th @click="sortBy('cpu')" class="sortable num" :class="{ active: vmSort.key === 'cpu' }">
+                            CPU<span x-text="sortIndicator('cpu')"></span>
+                        </th>
+                        <th @click="sortBy('mem')" class="sortable num" :class="{ active: vmSort.key === 'mem' }">
+                            Memory<span x-text="sortIndicator('mem')"></span>
+                        </th>
+                        <th @click="sortBy('uptime')" class="sortable num" :class="{ active: vmSort.key === 'uptime' }">
+                            Uptime<span x-text="sortIndicator('uptime')"></span>
+                        </th>
                     </tr>
                 </thead>
                 <tbody>
-                    <template x-for="vm in vms" :key="vm.cluster + ':' + vm.vmid">
-                        <tr @click="openVm(vm)" class="clickable">
+                    <template x-for="vm in sortedVms" :key="vm.cluster + ':' + vm.vmid">
+                        <tr @click="openVm(vm)" class="clickable"
+                            :class="{ stale: vmsAreStale }">
                             <td x-text="vm.vmid"></td>
                             <td x-text="vm.name || '(unnamed)'"></td>
                             <td x-text="vm.cluster"></td>
@@ -74,8 +143,9 @@
                             <td>
                                 <span class="badge" :class="'badge-' + vm.status" x-text="vm.status"></span>
                             </td>
-                            <td x-text="vm.cpu != null ? (vm.cpu * 100).toFixed(0) + '%' : '—'"></td>
-                            <td x-text="vm.mem != null && vm.maxmem != null ? humanBytes(vm.mem) + ' / ' + humanBytes(vm.maxmem) : '—'"></td>
+                            <td class="num" x-text="pct(vm.cpu)"></td>
+                            <td class="num" x-text="vm.mem != null && vm.maxmem != null ? humanBytes(vm.mem) + ' / ' + humanBytes(vm.maxmem) : '—'"></td>
+                            <td class="num" x-text="uptimeHuman(vm.uptime)"></td>
                         </tr>
                     </template>
                 </tbody>

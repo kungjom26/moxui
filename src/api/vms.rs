@@ -268,3 +268,253 @@ async fn vm_delete(
         upid,
     }))
 }
+
+#[cfg(test)]
+mod list_vms_contract_tests {
+    //! Contract tests for `GET /api/v1/vms`.
+    //!
+    //! Verifies that the wire shape returned by the backend matches
+    //! what the Alpine.js frontend expects in `ui/static/app.js` and
+    //! `ui/index.html`:
+    //!   - top-level keys: `vms` (Vec) and `errors` (HashMap)
+    //!   - each row has: cluster, vmid, name, node, status, cpu (Option<f64>),
+    //!     cpus, mem, maxmem, uptime, tags
+    //!   - `vms` includes QEMU VMs (frontend does not filter by kind)
+    //!   - auth required (401 without Bearer)
+    //!
+    //! The mock Proxmox server returns one QEMU VM (103, running)
+    //! and one LXC container (201, running) — list_vms returns both
+    //! because the upstream API has no kind filter at this layer
+    //! (filtering is done client-side in the LXC endpoint).
+
+    use axum::body::{to_bytes, Body};
+    use axum::http::{Request, StatusCode};
+    use secrecy::SecretString;
+    use tower::ServiceExt;
+
+    use crate::audit::AuditStore;
+    use crate::auth::{Claims, JwtService, UserStore};
+    use crate::config::{
+        AuthConfig, ClusterConfig, Config, DatabaseConfig, LoggingConfig, ServerConfig,
+    };
+    use crate::proxmox::ProxmoxClient;
+    use crate::state::AppState;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn operator_token(jwt: &std::sync::Arc<JwtService>) -> String {
+        let now = chrono::Utc::now().timestamp();
+        let claims = Claims {
+            sub: "u-test".to_string(),
+            username: "tester".to_string(),
+            role: "operator".to_string(),
+            iat: now,
+            exp: now + 600,
+        };
+        jwt.encode(&claims).expect("encode token")
+    }
+
+    fn authed_get(uri: &str, token: &str) -> Request<Body> {
+        Request::builder()
+            .uri(uri)
+            .header(axum::http::header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap()
+    }
+
+    async fn setup_app() -> (wiremock::MockServer, axum::Router) {
+        let server = MockServer::start().await;
+
+        // /access/ticket — login (ProxmoxClient::new does not call this,
+        // but we mount it anyway in case future changes pre-warm).
+        Mock::given(method("POST"))
+            .and(path("/api2/json/access/ticket"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": {
+                    "ticket": "PVE:root@pam:testticket::SIG",
+                    "csrf_token": "test-csrf",
+                    "username": "root@pam",
+                    "expires_at": 9_999_999_999_i64
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        // /cluster/resources?type=vm — both QEMU and LXC, all the fields
+        // the frontend reads (cpu, cpus, mem, maxmem, uptime, tags).
+        Mock::given(method("GET"))
+            .and(path("/api2/json/cluster/resources"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [
+                    {
+                        "vmid": 103, "name": "web-1", "node": "pve11",
+                        "type": "qemu", "status": "running",
+                        "cpu": 0.05, "cpus": 2.0,
+                        "mem": 1_073_741_824_u64, "maxmem": 2_147_483_648_u64,
+                        "uptime": 86_400_u64,
+                        "tags": "prod;web"
+                    },
+                    {
+                        "vmid": 201, "name": "web-lxc", "node": "pve11",
+                        "type": "lxc", "status": "running",
+                        "cpu": 0.02, "cpus": 1.0,
+                        "mem": 268_435_456_u64, "maxmem": 536_870_912_u64,
+                        "uptime": 3_600_u64,
+                        "tags": "staging"
+                    },
+                    {
+                        "vmid": 999, "name": "old-vm", "node": "pve11",
+                        "type": "qemu", "status": "stopped",
+                        "cpu": null, "cpus": 1.0,
+                        "mem": 0_u64, "maxmem": 1_073_741_824_u64,
+                        "uptime": 0_u64,
+                        "tags": null
+                    }
+                ]
+            })))
+            .mount(&server)
+            .await;
+
+        let config = ClusterConfig {
+            name: "homelab".to_string(),
+            url: server.uri(),
+            username: "root@pam".to_string(),
+            password: SecretString::new("test-pw".to_string().into_boxed_str()),
+            realm: "pam".to_string(),
+            insecure_skip_verify: true,
+            ca_cert_pem: None,
+        };
+        let client = ProxmoxClient::new(config).await.unwrap();
+        let audit = std::sync::Arc::new(AuditStore::open_in_memory().unwrap());
+        let app_cfg = Config {
+            server: ServerConfig {
+                bind: "127.0.0.1:0".to_string(),
+                workers: 0,
+                tls: None,
+            },
+            database: DatabaseConfig {
+                path: ":memory:".to_string(),
+                max_connections: 1,
+                run_migrations: false,
+            },
+            logging: LoggingConfig {
+                level: "info".to_string(),
+                format: "pretty".to_string(),
+            },
+            clusters: vec![],
+            auth: AuthConfig::default(),
+        };
+        let priv_pem = include_bytes!("../../tests/fixtures/test_jwt_priv.pem");
+        let pub_pem = include_bytes!("../../tests/fixtures/test_jwt_pub.pem");
+        let jwt = JwtService::new(priv_pem, pub_pem, "test", "test").expect("test jwt");
+        let state = AppState::new(app_cfg, vec![client], audit, jwt, UserStore::new());
+        let app = crate::api::router(state);
+        (server, app)
+    }
+
+    #[tokio::test]
+    async fn test_list_vms_requires_auth() {
+        let (_server, app) = setup_app().await;
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/vms")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_list_vms_response_matches_frontend_contract() {
+        // We can't easily extract the JwtService from the router after
+        // it's been wrapped, so we mint a fresh token with the same
+        // keypair the router was built with.
+        let (_server, app) = setup_app().await;
+        let priv_pem = include_bytes!("../../tests/fixtures/test_jwt_priv.pem");
+        let pub_pem = include_bytes!("../../tests/fixtures/test_jwt_pub.pem");
+        let jwt = JwtService::new(priv_pem, pub_pem, "test", "test").expect("test jwt");
+        let token = operator_token(&std::sync::Arc::new(jwt));
+
+        let resp = app
+            .oneshot(authed_get("/api/v1/vms", &token))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body_bytes = to_bytes(resp.into_body(), 16 * 1024).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+
+        // Top-level shape: `{ vms: [...], errors: {} }`.
+        assert!(body.get("vms").is_some(), "missing `vms` key");
+        assert!(body.get("errors").is_some(), "missing `errors` key");
+        assert!(body["vms"].is_array());
+        assert!(body["errors"].is_object());
+        assert_eq!(
+            body["errors"].as_object().unwrap().len(),
+            0,
+            "no per-cluster errors expected in this mock"
+        );
+
+        let vms = body["vms"].as_array().unwrap();
+        assert_eq!(vms.len(), 3, "expected 3 mock resources (2 qemu + 1 lxc)");
+
+        // Every row has the fields the frontend reads.
+        let required = [
+            "cluster", "vmid", "name", "node", "status", "cpu", "cpus", "mem", "maxmem", "uptime",
+            "tags",
+        ];
+        for row in vms {
+            for field in required {
+                assert!(row.get(field).is_some(), "row missing `{field}`: {row}");
+            }
+        }
+
+        // Spot-check the running qemu VM row.
+        let web1 = vms.iter().find(|r| r["vmid"] == 103).expect("web-1 row");
+        assert_eq!(web1["name"], "web-1");
+        assert_eq!(web1["cluster"], "homelab");
+        assert_eq!(web1["status"], "running");
+        // f64 — mock returns the literal 0.05; assert the value is in
+        // a tight band rather than exact-compare to avoid the
+        // clippy::float_cmp lint while still catching regressions.
+        let cpu = web1["cpu"].as_f64().unwrap();
+        assert!((cpu - 0.05).abs() < 1e-9, "cpu {cpu} should be 0.05");
+        assert_eq!(web1["uptime"].as_u64().unwrap(), 86_400);
+        assert_eq!(web1["tags"], "prod;web");
+
+        // Spot-check the stopped VM (null fields preserved).
+        let old = vms.iter().find(|r| r["vmid"] == 999).expect("old-vm row");
+        assert_eq!(old["status"], "stopped");
+        assert!(old["cpu"].is_null(), "stopped VM should have null cpu");
+        assert!(old["tags"].is_null(), "untagged VM should have null tags");
+    }
+
+    #[tokio::test]
+    async fn test_list_vms_includes_lxc_resources() {
+        // The Alpine frontend does not filter by kind — list_vms returns
+        // both qemu and lxc. Verify both are present so the UI table
+        // shows them (and so the user can navigate to them).
+        let (_server, app) = setup_app().await;
+        let priv_pem = include_bytes!("../../tests/fixtures/test_jwt_priv.pem");
+        let pub_pem = include_bytes!("../../tests/fixtures/test_jwt_pub.pem");
+        let jwt = JwtService::new(priv_pem, pub_pem, "test", "test").expect("test jwt");
+        let token = operator_token(&std::sync::Arc::new(jwt));
+
+        let resp = app
+            .oneshot(authed_get("/api/v1/vms", &token))
+            .await
+            .unwrap();
+        let body_bytes = to_bytes(resp.into_body(), 16 * 1024).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        let vms = body["vms"].as_array().unwrap();
+        let has_qemu = vms.iter().any(|r| r["vmid"] == 103);
+        let has_lxc = vms.iter().any(|r| r["vmid"] == 201);
+        assert!(has_qemu, "qemu VM 103 should be in response");
+        assert!(
+            has_lxc,
+            "LXC 201 should also be in response (list_vms is unfiltered)"
+        );
+    }
+}
