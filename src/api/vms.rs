@@ -11,7 +11,7 @@ use axum::{
     extract::{Path, State},
     Json,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::auth::{require_role, AuthContext, Role};
 use crate::error::{AppError, AppResult};
@@ -137,18 +137,42 @@ pub struct VmActionResponse {
     pub upid: String,
 }
 
+/// Request body for `POST /api/v1/vms/:cluster/:node/:vmid/delete`.
+///
+/// All fields are optional; defaults match Proxmox's safe defaults.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct DeleteVmRequest {
+    /// Destroy disks in addition to removing the VM config. Default `false`
+    /// (config-only removal — Proxmox's default).
+    #[serde(default)]
+    pub purge: bool,
+    /// Force removal even if the VM is running (Proxmox will refuse
+    /// `delete` on a running VM unless `force=true` is set). Default `false`.
+    #[serde(default)]
+    pub force: bool,
+    /// Skip Proxmox's config lock (HA, replication, etc.). Default `false`.
+    /// Operators should rarely set this; it's intended for clean-up after
+    /// broken locks.
+    #[serde(default)]
+    pub skiplock: bool,
+}
+
 /// `POST /api/v1/vms/:cluster/:node/:vmid/:action`
-/// VM action dispatcher (start | stop | shutdown | reboot).
+/// VM action dispatcher (start | stop | shutdown | reboot | delete).
 ///
 /// Requires `Operator` or higher role. Returns 401 if no/invalid token,
 /// 403 if role is too low.
 ///
 /// Returns the Proxmox UPID so the caller can poll for completion.
 /// Allowed actions are whitelisted — anything else is `400 Bad Request`.
+///
+/// `delete` accepts a JSON body of [`DeleteVmRequest`] for
+/// `purge`/`force`/`skiplock` options. Other actions ignore the body.
 pub async fn vm_action_handler(
     State(state): State<AppState>,
     auth: AuthContext,
     Path((cluster, node, vmid, action)): Path<(String, String, u32, String)>,
+    body: Option<Json<DeleteVmRequest>>,
 ) -> AppResult<Json<VmActionResponse>> {
     // RBAC: only Operator+ can mutate VMs. require_role returns a 403
     // Response on denial; we need to surface it as AppError::Forbidden
@@ -166,13 +190,20 @@ pub async fn vm_action_handler(
         "start" | "stop" | "shutdown" | "reboot" => {
             vm_action(&state, &cluster, &node, vmid, &action).await
         }
+        "delete" => {
+            // Body is optional; an empty POST deletes the VM config
+            // (Proxmox default). Without body, defaults from
+            // DeleteVmRequest::default are used (purge=false).
+            let opts = body.map(|Json(b)| b).unwrap_or_default();
+            vm_delete(&state, &cluster, &node, vmid, opts).await
+        }
         other => Err(AppError::BadRequest(format!(
-            "unknown action '{other}'; expected start|stop|shutdown|reboot"
+            "unknown action '{other}'; expected start|stop|shutdown|reboot|delete"
         ))),
     }
 }
 
-/// Shared logic for all VM write actions.
+/// Shared logic for all VM write actions (start/stop/shutdown/reboot).
 ///
 /// Proxmox endpoint shape (per skill reference):
 /// ```text
@@ -199,6 +230,41 @@ async fn vm_action(
     Ok(Json(VmActionResponse {
         vmid,
         action: action.to_string(),
+        upid,
+    }))
+}
+
+/// Delete a VM.
+///
+/// Proxmox endpoint:
+/// ```text
+/// POST /api2/json/nodes/{node}/qemu/{vmid}?purge=0|1&force=0|1&skiplock=0|1
+/// Cookie: PVEAuthCookie=...
+/// CSRFPreventionToken: ...
+///
+/// Response: {"data": "UPID:pve11:00001234:..."}
+/// ```
+///
+/// Note: Proxmox uses POST (not HTTP DELETE) for state-changing operations.
+/// The query params control destroy-vs-remove and lock behavior.
+async fn vm_delete(
+    state: &AppState,
+    cluster: &str,
+    node: &str,
+    vmid: u32,
+    opts: DeleteVmRequest,
+) -> AppResult<Json<VmActionResponse>> {
+    let client = state
+        .client(cluster)
+        .ok_or_else(|| AppError::NotFound(format!("cluster '{cluster}' not configured")))?;
+
+    let upid = client
+        .delete_vm(node, vmid, opts.purge, opts.force, opts.skiplock)
+        .await?;
+
+    Ok(Json(VmActionResponse {
+        vmid,
+        action: "delete".to_string(),
         upid,
     }))
 }

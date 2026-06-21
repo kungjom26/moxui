@@ -240,6 +240,74 @@ impl ProxmoxClient {
         self.handle_response::<T>(resp).await
     }
 
+    /// Issue a POST with form-style query parameters (Proxmox's preferred
+    /// shape for most state-changing endpoints — e.g. VM delete with
+    /// `purge=1&force=1`).
+    ///
+    /// Query values are URL-encoded by reqwest. Returns the deserialized
+    /// response data (typically a `String` UPID).
+    pub async fn post_with_query<T>(
+        &self,
+        path: &str,
+        params: Vec<(String, String)>,
+    ) -> AppResult<T>
+    where
+        T: serde::de::DeserializeOwned + Default,
+    {
+        let ticket = self.current_ticket().await?;
+        let url = self.build_url(path);
+        let fut = self
+            .http
+            .post(&url)
+            .query(&params)
+            .header("Cookie", format!("PVEAuthCookie={}", ticket.ticket))
+            .header("CSRFPreventionToken", &ticket.csrf_token)
+            .send();
+        let resp = match tokio::time::timeout(Duration::from_secs(POST_TIMEOUT_SECS), fut).await {
+            Ok(result) => result?,
+            Err(_elapsed) => {
+                return Err(AppError::Proxmox(format!(
+                    "POST {path} timed out after {POST_TIMEOUT_SECS}s"
+                )))
+            }
+        };
+        self.handle_response::<T>(resp).await
+    }
+
+    /// Delete a QEMU VM.
+    ///
+    /// Proxmox endpoint: `POST /nodes/{node}/qemu/{vmid}` (Proxmox uses
+    /// POST for all state-changing operations, including delete, with
+    /// `purge`, `force`, and `skiplock` as form params).
+    ///
+    /// Returns the Proxmox UPID (e.g. `UPID:pve11:00001234:...`) so the
+    /// caller can poll the task status.
+    pub async fn delete_vm(
+        &self,
+        node: &str,
+        vmid: u32,
+        purge: bool,
+        force: bool,
+        skiplock: bool,
+    ) -> AppResult<String> {
+        let path = format!("nodes/{node}/qemu/{vmid}");
+        let params = vec![
+            (
+                "purge".to_string(),
+                if purge { "1" } else { "0" }.to_string(),
+            ),
+            (
+                "force".to_string(),
+                if force { "1" } else { "0" }.to_string(),
+            ),
+            (
+                "skiplock".to_string(),
+                if skiplock { "1" } else { "0" }.to_string(),
+            ),
+        ];
+        self.post_with_query(&path, params).await
+    }
+
     /// Record success (reset circuit breaker).
     pub fn record_success(&self) {
         self.circuit_breaker.record_success();
@@ -850,6 +918,21 @@ mod vm_action_integration_tests {
             .mount(&server)
             .await;
 
+        // /nodes/pve11/qemu/103 — DELETE (POST with purge/force/skiplock).
+        // Matches any query params (wiremock's `path` matcher ignores them).
+        Mock::given(method("POST"))
+            .and(path("/api2/json/nodes/pve11/qemu/103"))
+            .and(header(
+                "Cookie",
+                "PVEAuthCookie=PVE:root@pam:testticket::SIG",
+            ))
+            .and(header("CSRFPreventionToken", "test-csrf"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": "UPID:pve11:00001235:00000000:60F0EEEE:qmdestroy:103:root@pam:"
+            })))
+            .mount(&server)
+            .await;
+
         let config = ClusterConfig {
             name: "homelab".to_string(),
             url: server.uri(),
@@ -921,6 +1004,17 @@ mod vm_action_integration_tests {
         assert_eq!(body["status"], "running");
     }
 
+    /// Build a POST with an optional JSON body and Bearer auth header.
+    fn authed_post_json(uri: &str, token: &str, body: &str) -> Request<Body> {
+        Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header(axum::http::header::AUTHORIZATION, format!("Bearer {token}"))
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap()
+    }
+
     #[tokio::test]
     async fn test_vm_start_returns_upid_and_audits() {
         let (_server, state, audit) = setup_with_mock().await;
@@ -940,6 +1034,84 @@ mod vm_action_integration_tests {
 
         // Audit log captured the POST.
         assert_eq!(audit.count().unwrap(), 1, "expected exactly 1 audit row");
+    }
+
+    // ---- Day 8: VM delete (with body options) ----
+
+    #[tokio::test]
+    async fn test_vm_delete_with_body_returns_upid_and_audits() {
+        let (_server, state, audit) = setup_with_mock().await;
+        let token = operator_token(&state.jwt);
+        let app = crate::api::router(state);
+
+        // Body specifies purge=true, force=true, skiplock=false.
+        let body = r#"{"purge":true,"force":true,"skiplock":false}"#;
+        let resp = app
+            .oneshot(authed_post_json(
+                "/api/v1/vms/homelab/pve11/103/delete",
+                &token,
+                body,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(body["vmid"], 103);
+        assert_eq!(body["action"], "delete");
+        assert!(body["upid"].as_str().unwrap().starts_with("UPID:pve11:"));
+
+        // Audit log captured the POST.
+        assert_eq!(audit.count().unwrap(), 1, "expected exactly 1 audit row");
+    }
+
+    #[tokio::test]
+    async fn test_vm_delete_with_empty_body_uses_defaults() {
+        // No body — DeleteVmRequest::default() gives purge=false, force=false,
+        // skiplock=false. The mock matches any query params so the call
+        // succeeds. We just need to verify the empty-body path doesn't 400.
+        let (_server, state, _audit) = setup_with_mock().await;
+        let token = operator_token(&state.jwt);
+        let app = crate::api::router(state);
+
+        let resp = app
+            .oneshot(authed_post("/api/v1/vms/homelab/pve11/103/delete", &token))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(body["action"], "delete");
+    }
+
+    #[tokio::test]
+    async fn test_vm_delete_rejects_viewer_role() {
+        let (_server, state, _audit) = setup_with_mock().await;
+        let token = viewer_token(&state.jwt);
+        let app = crate::api::router(state);
+
+        let resp = app
+            .oneshot(authed_post("/api/v1/vms/homelab/pve11/103/delete", &token))
+            .await
+            .unwrap();
+        // Viewer cannot perform any state-changing action.
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_vm_unknown_action_returns_400() {
+        let (_server, state, _audit) = setup_with_mock().await;
+        let token = operator_token(&state.jwt);
+        let app = crate::api::router(state);
+
+        let resp = app
+            .oneshot(authed_post(
+                "/api/v1/vms/homelab/pve11/103/snapshot",
+                &token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     // ---- Day 5: LXC + storage read endpoints ----
