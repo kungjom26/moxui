@@ -58,6 +58,12 @@ pub struct VmResource {
     pub name: String,
     /// Node that currently hosts the VM.
     pub node: String,
+    /// Resource kind (`qemu` or `lxc`).
+    ///
+    /// Proxmox `/cluster/resources?type=vm` returns both VMs and containers
+    /// in a single payload; we filter on this field in the client.
+    #[serde(rename = "type", default)]
+    pub kind: String,
     /// Current status (e.g. `running`, `stopped`, `paused`).
     pub status: String,
     /// Current CPU usage as a fraction in `[0.0, 1.0]`.
@@ -106,6 +112,104 @@ pub struct VmResource {
 pub struct ApiResponse<T> {
     /// Response payload.
     pub data: T,
+}
+
+/// Single LXC container status snapshot (from
+/// `/nodes/{node}/lxc/{vmid}/status/current`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LxcStatus {
+    /// Container ID.
+    pub vmid: u32,
+    /// Container name.
+    pub name: String,
+    /// Node that hosts the container.
+    pub node: String,
+    /// Current status (e.g. `running`, `stopped`).
+    pub status: String,
+    /// Current CPU usage as a fraction in `[0.0, 1.0]`.
+    #[serde(default)]
+    pub cpu: Option<f64>,
+    /// Allocated CPU cores.
+    #[serde(default)]
+    pub cpus: Option<f64>,
+    /// Used memory in bytes.
+    #[serde(default)]
+    pub mem: Option<u64>,
+    /// Configured memory in bytes.
+    #[serde(default)]
+    pub maxmem: Option<u64>,
+    /// Used root filesystem in bytes.
+    #[serde(default)]
+    pub disk: Option<u64>,
+    /// Configured root filesystem in bytes.
+    #[serde(default)]
+    pub maxdisk: Option<u64>,
+    /// Uptime in seconds.
+    #[serde(default)]
+    pub uptime: Option<u64>,
+    /// Container template flag.
+    #[serde(default)]
+    pub template: Option<u8>,
+}
+
+/// Storage pool summary (from `/nodes/{node}/storage`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageResource {
+    /// Storage identifier (e.g. `local`, `ceph-pool`).
+    pub storage: String,
+    /// Storage type (e.g. `dir`, `zfspool`, `rbd`, `nfs`, `cifs`).
+    #[serde(rename = "type")]
+    pub kind: String,
+    /// Total size in bytes (`0` for non-block storages like ISO-only dirs).
+    #[serde(default)]
+    pub total: u64,
+    /// Used size in bytes.
+    #[serde(default)]
+    pub used: u64,
+    /// Available size in bytes.
+    #[serde(default)]
+    pub avail: u64,
+    /// Usage as a fraction in `[0.0, 1.0]`.
+    #[serde(default)]
+    pub used_fraction: Option<f64>,
+    /// Whether this storage is enabled.
+    #[serde(default)]
+    pub enabled: Option<u8>,
+    /// Whether this storage is shared across the cluster.
+    #[serde(default)]
+    pub shared: Option<u8>,
+    /// Human-readable content types (e.g. `images,rootdir,iso,vztmpl`).
+    #[serde(default)]
+    pub content: Option<String>,
+}
+
+/// A single volume stored inside a storage pool (from
+/// `/nodes/{node}/storage/{storage}/content`).
+///
+/// Examples: ISO images, container templates, VM disk images, backups.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageContent {
+    /// Volume identifier (e.g. `local:iso/debian-12.iso`).
+    pub volid: String,
+    /// Storage holding this volume.
+    pub storage: String,
+    /// Content kind (e.g. `iso`, `vztmpl`, `images`, `backup`).
+    pub content: String,
+    /// Filename portion of `volid`.
+    #[serde(default)]
+    pub volid_name: Option<String>,
+    /// Volume size in bytes.
+    #[serde(default)]
+    pub size: u64,
+    /// Used bytes (e.g. for `images` after thin/thick allocation).
+    #[serde(default)]
+    pub used: Option<u64>,
+    /// Volume format (e.g. `qcow2`, `raw`, `iso`, `tgz`).
+    #[serde(default)]
+    pub format: Option<String>,
+    /// Creation time, Unix seconds.
+    #[serde(default)]
+    pub ctime: Option<u64>,
 }
 
 #[cfg(test)]

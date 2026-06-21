@@ -2,6 +2,8 @@
 
 pub mod auth;
 pub mod health;
+pub mod lxcs;
+pub mod storages;
 pub mod vms;
 
 use axum::{
@@ -43,6 +45,13 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v1/vms/:cluster/:node/:vmid/:action",
             post(vms::vm_action_handler),
+        )
+        .route("/api/v1/lxcs", get(lxcs::list_lxcs))
+        .route("/api/v1/lxcs/:cluster/:node/:vmid", get(lxcs::lxc_detail))
+        .route("/api/v1/storages", get(storages::list_storages))
+        .route(
+            "/api/v1/storages/:cluster/:node/:storage/content",
+            get(storages::storage_content),
         )
         .route_layer(from_fn_with_state(state.clone(), require_auth));
 

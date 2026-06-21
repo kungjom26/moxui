@@ -271,6 +271,96 @@ impl ProxmoxClient {
         }
     }
 
+    /// List all LXC containers across cluster/nodes (read-only, RBAC: Viewer+).
+    ///
+    /// Uses the same `/cluster/resources?type=vm` endpoint as [`Self::list_vms`]
+    /// — the API returns both QEMU VMs and LXC containers in one payload, so we
+    /// filter on the wire side to keep the client simple. Bounded by
+    /// [`LIST_VMS_TIMEOUT_SECS`].
+    pub async fn list_lxcs(&self) -> AppResult<Vec<crate::proxmox::types::VmResource>> {
+        match tokio::time::timeout(
+            Duration::from_secs(LIST_VMS_TIMEOUT_SECS),
+            self.get::<Vec<crate::proxmox::types::VmResource>>("cluster/resources?type=vm"),
+        )
+        .await
+        {
+            Ok(Ok(mut all)) => {
+                all.retain(|r| r.kind == "lxc");
+                Ok(all)
+            }
+            Ok(Err(e)) => Err(e),
+            Err(_elapsed) => Err(AppError::Proxmox(format!(
+                "list_lxcs timed out after {LIST_VMS_TIMEOUT_SECS}s"
+            ))),
+        }
+    }
+
+    /// Fetch a single LXC container by (node, vmid). Bounded by
+    /// [`LIST_VMS_TIMEOUT_SECS`].
+    ///
+    /// Returns `Ok(None)` if the API responds but the container is not found
+    /// (treated as 404 upstream). Returns `Err` on transport/parse failure.
+    pub async fn lxc_detail(
+        &self,
+        node: &str,
+        vmid: u32,
+    ) -> AppResult<Option<crate::proxmox::types::LxcStatus>> {
+        let path = format!("nodes/{node}/lxc/{vmid}/status/current");
+        match tokio::time::timeout(
+            Duration::from_secs(LIST_VMS_TIMEOUT_SECS),
+            self.get::<Option<crate::proxmox::types::LxcStatus>>(&path),
+        )
+        .await
+        {
+            Ok(Ok(detail)) => Ok(detail),
+            Ok(Err(e)) => Err(e),
+            Err(_elapsed) => Err(AppError::Proxmox(format!(
+                "lxc_detail timed out after {LIST_VMS_TIMEOUT_SECS}s"
+            ))),
+        }
+    }
+
+    /// List storage pools on a specific node. Bounded by
+    /// [`LIST_VMS_TIMEOUT_SECS`].
+    pub async fn list_storages(
+        &self,
+        node: &str,
+    ) -> AppResult<Vec<crate::proxmox::types::StorageResource>> {
+        let path = format!("nodes/{node}/storage");
+        match tokio::time::timeout(
+            Duration::from_secs(LIST_VMS_TIMEOUT_SECS),
+            self.get::<Vec<crate::proxmox::types::StorageResource>>(&path),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_elapsed) => Err(AppError::Proxmox(format!(
+                "list_storages timed out after {LIST_VMS_TIMEOUT_SECS}s"
+            ))),
+        }
+    }
+
+    /// List volume contents of a storage pool (e.g. ISO images, backup
+    /// files, container templates). Bounded by [`LIST_VMS_TIMEOUT_SECS`].
+    pub async fn storage_content(
+        &self,
+        node: &str,
+        storage: &str,
+    ) -> AppResult<Vec<crate::proxmox::types::StorageContent>> {
+        let path = format!("nodes/{node}/storage/{storage}/content");
+        match tokio::time::timeout(
+            Duration::from_secs(LIST_VMS_TIMEOUT_SECS),
+            self.get::<Vec<crate::proxmox::types::StorageContent>>(&path),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_elapsed) => Err(AppError::Proxmox(format!(
+                "storage_content timed out after {LIST_VMS_TIMEOUT_SECS}s"
+            ))),
+        }
+    }
+
     /// Lightweight ping — fetch `/version` to verify reachability + ticket cache.
     ///
     /// Returns `Ok(())` on any 2xx (ticket can be acquired AND version returns).
@@ -642,6 +732,7 @@ mod vm_action_integration_tests {
             .unwrap()
     }
 
+    #[allow(clippy::too_many_lines)]
     async fn setup_with_mock() -> (wiremock::MockServer, AppState, std::sync::Arc<AuditStore>) {
         use wiremock::matchers::{header, method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -662,20 +753,83 @@ mod vm_action_integration_tests {
             .mount(&server)
             .await;
 
-        // /cluster/resources?type=vm — two VMs.
+        // /cluster/resources?type=vm — one QEMU VM + one LXC container.
+        // Used by both list_vms (unfiltered) and list_lxcs (filter kind == "lxc").
         Mock::given(method("GET"))
             .and(path("/api2/json/cluster/resources"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
                 "data": [
                     {
                         "vmid": 103, "name": "web-1", "node": "pve11",
-                        "status": "running", "cpu": 0.05, "cpus": 2.0,
+                        "type": "qemu", "status": "running",
+                        "cpu": 0.05, "cpus": 2.0,
                         "mem": 1_073_741_824_u64, "maxmem": 2_147_483_648_u64
                     },
                     {
-                        "vmid": 104, "name": "db-1", "node": "pve12",
-                        "status": "stopped", "cpu": 0.0, "cpus": 4.0,
-                        "mem": 0_u64, "maxmem": 4_294_967_296_u64
+                        "vmid": 201, "name": "web-lxc", "node": "pve11",
+                        "type": "lxc", "status": "running",
+                        "cpu": 0.02, "cpus": 1.0,
+                        "mem": 268_435_456_u64, "maxmem": 536_870_912_u64,
+                        "template": 0
+                    }
+                ]
+            })))
+            .mount(&server)
+            .await;
+
+        // /nodes/pve11/lxc/201/status/current — LXC detail.
+        Mock::given(method("GET"))
+            .and(path("/api2/json/nodes/pve11/lxc/201/status/current"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": {
+                    "vmid": 201, "name": "web-lxc", "node": "pve11",
+                    "status": "running", "cpu": 0.02, "cpus": 1.0,
+                    "mem": 268_435_456_u64, "maxmem": 536_870_912_u64,
+                    "template": 0
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        // /storage — cluster-level storage aggregation.
+        Mock::given(method("GET"))
+            .and(path("/api2/json/storage"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [
+                    {
+                        "storage": "local", "type": "dir",
+                        "total": 100_u64, "used": 25_u64, "avail": 75_u64,
+                        "used_fraction": 0.25, "enabled": 1, "shared": 0,
+                        "content": "iso,vztmpl,backup"
+                    },
+                    {
+                        "storage": "ceph-pool", "type": "rbd",
+                        "total": 10_000_u64, "used": 4_000_u64, "avail": 6_000_u64,
+                        "used_fraction": 0.4, "enabled": 1, "shared": 1,
+                        "content": "images,rootdir"
+                    }
+                ]
+            })))
+            .mount(&server)
+            .await;
+
+        // /nodes/pve11/storage/local/content — storage content listing.
+        Mock::given(method("GET"))
+            .and(path("/api2/json/nodes/pve11/storage/local/content"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [
+                    {
+                        "volid": "local:iso/debian-12.iso",
+                        "storage": "local", "content": "iso",
+                        "volid_name": "debian-12.iso", "size": 800_000_000_u64,
+                        "format": "iso", "ctime": 1_700_000_000_i64
+                    },
+                    {
+                        "volid": "local:vztmpl/debian-12-standard.tar.zst",
+                        "storage": "local", "content": "vztmpl",
+                        "volid_name": "debian-12-standard.tar.zst",
+                        "size": 100_000_000_u64, "format": "tgz",
+                        "ctime": 1_700_000_000_i64
                     }
                 ]
             })))
@@ -785,5 +939,145 @@ mod vm_action_integration_tests {
 
         // Audit log captured the POST.
         assert_eq!(audit.count().unwrap(), 1, "expected exactly 1 audit row");
+    }
+
+    // ---- Day 5: LXC + storage read endpoints ----
+
+    fn viewer_token(jwt: &crate::auth::JwtService) -> String {
+        use crate::auth::{Claims, Role};
+        let now = chrono::Utc::now().timestamp();
+        let claims = Claims {
+            sub: "viewer".to_string(),
+            username: "viewer".to_string(),
+            role: Role::Viewer.to_string(),
+            exp: now + 300,
+            iat: now,
+        };
+        jwt.encode(&claims).unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_list_lxcs_filters_out_qemu_vms() {
+        let (_server, state, _audit) = setup_with_mock().await;
+        let token = viewer_token(&state.jwt);
+        let app = crate::api::router(state);
+
+        let resp = app
+            .oneshot(authed_get("/api/v1/lxcs", &token))
+            .await
+            .unwrap();
+        let status = resp.status();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "body={}",
+            String::from_utf8_lossy(&body_bytes)
+        );
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        let lxcs = body["lxcs"].as_array().unwrap();
+        assert_eq!(lxcs.len(), 1, "expected only the lxc, not the qemu vm");
+        assert_eq!(lxcs[0]["vmid"], 201);
+        assert_eq!(lxcs[0]["name"], "web-lxc");
+        assert!(body["errors"].as_object().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_lxc_detail_returns_row_for_existing() {
+        let (_server, state, _audit) = setup_with_mock().await;
+        let token = viewer_token(&state.jwt);
+        let app = crate::api::router(state);
+
+        let resp = app
+            .oneshot(authed_get("/api/v1/lxcs/homelab/pve11/201", &token))
+            .await
+            .unwrap();
+        let status = resp.status();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "body={}",
+            String::from_utf8_lossy(&body_bytes)
+        );
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(body["vmid"], 201);
+        assert_eq!(body["name"], "web-lxc");
+        assert_eq!(body["status"], "running");
+    }
+
+    #[tokio::test]
+    async fn test_list_storages_returns_aggregated_rows() {
+        let (_server, state, _audit) = setup_with_mock().await;
+        let token = viewer_token(&state.jwt);
+        let app = crate::api::router(state);
+
+        let resp = app
+            .oneshot(authed_get("/api/v1/storages", &token))
+            .await
+            .unwrap();
+        let status = resp.status();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "body={}",
+            String::from_utf8_lossy(&body_bytes)
+        );
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        let storages = body["storages"].as_array().unwrap();
+        assert_eq!(storages.len(), 2, "expected local + ceph-pool");
+        let names: Vec<&str> = storages
+            .iter()
+            .map(|s| s["storage"].as_str().unwrap())
+            .collect();
+        assert!(names.contains(&"local"));
+        assert!(names.contains(&"ceph-pool"));
+    }
+
+    #[tokio::test]
+    async fn test_storage_content_returns_volumes() {
+        let (_server, state, _audit) = setup_with_mock().await;
+        let token = viewer_token(&state.jwt);
+        let app = crate::api::router(state);
+
+        let resp = app
+            .oneshot(authed_get(
+                "/api/v1/storages/homelab/pve11/local/content",
+                &token,
+            ))
+            .await
+            .unwrap();
+        let status = resp.status();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "body={}",
+            String::from_utf8_lossy(&body_bytes)
+        );
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        let items = body.as_array().unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["volid"], "local:iso/debian-12.iso");
+        assert_eq!(items[0]["content"], "iso");
+    }
+
+    #[tokio::test]
+    async fn test_lxc_endpoint_requires_auth() {
+        let (_server, state, _audit) = setup_with_mock().await;
+        let app = crate::api::router(state);
+
+        let resp = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("GET")
+                    .uri("/api/v1/lxcs")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 }
