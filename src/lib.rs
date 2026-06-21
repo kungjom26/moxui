@@ -8,6 +8,13 @@
 #![warn(rustdoc::missing_crate_level_docs)]
 #![forbid(unsafe_code)]
 
+/// Install the default rustls crypto provider (aws-lc-rs) at process
+/// startup. Required by rustls 0.23+ — without it, both server and
+/// client configurations fail at construction time.
+pub fn install_crypto_provider() {
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+}
+
 pub mod api;
 pub mod audit;
 pub mod auth;
@@ -20,6 +27,7 @@ pub mod proxmox;
 pub mod security;
 pub mod state;
 pub mod telemetry;
+pub mod tls;
 pub mod ui;
 
 /// Current `MoxUI` version (semver).

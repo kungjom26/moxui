@@ -694,7 +694,7 @@ mod vm_action_integration_tests {
     use super::*;
     use crate::audit::AuditStore;
     use crate::auth::{Claims, JwtService, UserStore};
-    use crate::config::{AuthConfig, DatabaseConfig, LoggingConfig, ServerConfig};
+    use crate::config::{AuthConfig, LoggingConfig, ServerConfig};
     use crate::state::AppState;
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
@@ -865,8 +865,9 @@ mod vm_action_integration_tests {
             server: ServerConfig {
                 bind: "127.0.0.1:0".to_string(),
                 workers: 0,
+                tls: None,
             },
-            database: DatabaseConfig {
+            database: crate::config::DatabaseConfig {
                 path: ":memory:".to_string(),
                 max_connections: 1,
                 run_migrations: false,

@@ -89,6 +89,8 @@ futures-util = "0.3"
 
 # Rate limiting
 tower_governor = "0.8"
+axum-server = { version = "0.7.2", default-features = false, features = ["tls-rustls"] }
+tokio-rustls = "0.26.4"
 
 [dev-dependencies]
 tokio-test = "0.4"

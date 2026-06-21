@@ -114,6 +114,7 @@ mod tests {
             server: ServerConfig {
                 bind: "127.0.0.1:0".to_string(),
                 workers: 0,
+                tls: None,
             },
             database: DatabaseConfig {
                 path: ":memory:".to_string(),

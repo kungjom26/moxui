@@ -165,6 +165,7 @@ mod tests {
             server: crate::config::ServerConfig {
                 bind: "0.0.0.0:8080".to_string(),
                 workers: 0,
+                tls: None,
             },
             database: crate::config::DatabaseConfig {
                 path: "moxui.db".to_string(),

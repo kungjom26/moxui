@@ -61,5 +61,51 @@ pub fn router(state: AppState) -> Router {
             state.clone(),
             crate::audit::audit_middleware,
         ))
+        .layer(axum::middleware::from_fn(security_headers_middleware))
         .with_state(state)
+}
+
+/// Middleware that adds production security headers to every response.
+///
+/// Headers (only set when not already present, so handlers can override):
+/// - `Strict-Transport-Security: max-age=31536000; includeSubDomains`
+/// - `X-Content-Type-Options: nosniff`
+/// - `X-Frame-Options: DENY`
+/// - `Referrer-Policy: no-referrer`
+/// - `Content-Security-Policy: default-src 'self'`
+async fn security_headers_middleware(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::http::{header, HeaderValue};
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    if !headers.contains_key(header::STRICT_TRANSPORT_SECURITY) {
+        headers.insert(
+            header::STRICT_TRANSPORT_SECURITY,
+            HeaderValue::from_static("max-age=31536000; includeSubDomains"),
+        );
+    }
+    if !headers.contains_key("x-content-type-options") {
+        headers.insert(
+            "x-content-type-options",
+            HeaderValue::from_static("nosniff"),
+        );
+    }
+    if !headers.contains_key("x-frame-options") {
+        headers.insert("x-frame-options", HeaderValue::from_static("DENY"));
+    }
+    if !headers.contains_key(header::REFERRER_POLICY) {
+        headers.insert(
+            header::REFERRER_POLICY,
+            HeaderValue::from_static("no-referrer"),
+        );
+    }
+    if !headers.contains_key(header::CONTENT_SECURITY_POLICY) {
+        headers.insert(
+            header::CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static("default-src 'self'"),
+        );
+    }
+    response
 }

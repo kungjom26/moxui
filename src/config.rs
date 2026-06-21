@@ -50,6 +50,27 @@ pub struct ServerConfig {
     /// Number of worker threads (0 = num CPUs).
     #[serde(default)]
     pub workers: usize,
+    /// TLS configuration. When `Some`, the server listens with HTTPS only
+    /// and refuses plaintext HTTP. When `None`, the server listens with
+    /// plaintext HTTP and emits a startup warning.
+    #[serde(default)]
+    pub tls: Option<TlsConfig>,
+}
+
+/// TLS configuration. Paths to PEM-encoded certificate and private key.
+///
+/// Both files must be readable by the moxui process. The certificate
+/// should be a full chain (leaf + intermediates) in PEM format. The key
+/// must be unencrypted PKCS#8 or RSA PEM.
+///
+/// When TLS is configured, the server enforces HTTPS-only: any plaintext
+/// HTTP request is rejected (connection dropped at the TLS layer).
+#[derive(Debug, Clone, Deserialize)]
+pub struct TlsConfig {
+    /// Path to a PEM-encoded certificate (or fullchain) file.
+    pub cert_pem_path: String,
+    /// Path to a PEM-encoded private key file.
+    pub key_pem_path: String,
 }
 
 /// Database configuration.

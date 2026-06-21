@@ -51,6 +51,9 @@ async fn main() -> ExitCode {
         return ExitCode::from(1);
     }
 
+    // Install rustls crypto provider (required by rustls 0.23+)
+    moxui::install_crypto_provider();
+
     tracing::info!(
         version = moxui::VERSION,
         git_sha = moxui::GIT_SHA,
@@ -133,19 +136,17 @@ async fn main() -> ExitCode {
     // Build router
     let app = moxui::api::router(state);
 
-    // Bind and serve
+    // Bind and serve (HTTPS if server.tls is configured, plaintext HTTP otherwise)
     let bind = config.server.bind.clone();
-    let listener = match tokio::net::TcpListener::bind(&bind).await {
-        Ok(l) => l,
+    let addr: std::net::SocketAddr = match bind.parse() {
+        Ok(a) => a,
         Err(e) => {
-            tracing::error!(error = %e, bind = %bind, "Failed to bind");
+            tracing::error!(error = %e, bind = %bind, "Invalid bind address");
             return ExitCode::from(1);
         }
     };
 
-    tracing::info!(bind = %bind, "MoxUI listening");
-
-    if let Err(e) = axum::serve(listener, app).await {
+    if let Err(e) = moxui::tls::serve(addr, app, config.server.tls.as_ref()).await {
         tracing::error!(error = %e, "Server error");
         return ExitCode::from(1);
     }
