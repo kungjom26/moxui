@@ -1,0 +1,107 @@
+# moxui configuration (example / template).
+#
+# Copy to /etc/moxui/config.yaml and adjust paths + cluster details.
+# This file is shipped as an example — values are NOT safe defaults.
+# Every secret here MUST be replaced before running moxui in production.
+
+# -----------------------------------------------------------------------------
+# HTTP server
+# -----------------------------------------------------------------------------
+server:
+  # Bind address. Use 0.0.0.0 to listen on all interfaces, 127.0.0.1 for
+  # loopback-only (e.g. behind a reverse proxy).
+  bind: "0.0.0.0:8080"
+
+  # Number of worker threads (0 = num_cpus). For a small moxui instance
+  # serving 1-3 Proxmox clusters, 2-4 workers is usually plenty.
+  workers: 0
+
+  # TLS termination. WHEN CONFIGURED, the server listens with HTTPS only
+  # and refuses plaintext HTTP. When omitted, the server falls back to
+  # plaintext HTTP (development only).
+  # tls:
+  #   cert_pem_path: /etc/moxui/tls/cert.pem
+  #   key_pem_path: /etc/moxui/tls/key.pem
+
+# -----------------------------------------------------------------------------
+# Database
+# -----------------------------------------------------------------------------
+database:
+  # Path to the SQLite file. The audit log lives at <path>.audit.
+  path: /var/lib/moxui/moxui.db
+  # Maximum connections in the pool. 8 is a good default.
+  max_connections: 8
+  # Auto-migrate on startup. Should remain true unless migrations are
+  # managed externally.
+  run_migrations: true
+
+# -----------------------------------------------------------------------------
+# Logging
+# -----------------------------------------------------------------------------
+logging:
+  # trace | debug | info | warn | error
+  level: info
+  # "json" for production, "pretty" for development.
+  format: json
+
+# -----------------------------------------------------------------------------
+# Proxmox clusters
+# -----------------------------------------------------------------------------
+# Add one block per cluster you want to manage. The cluster name appears
+# in API URLs (/api/v1/vms/<cluster>/...) and in audit log rows.
+clusters:
+  - name: homelab
+    url: https://pve11.example.com:8006
+    username: moxui@pve
+    # Password: prefer a service account with limited privileges.
+    # Stored in SecretString (zeroed on drop). Recommend using a vault
+    # + secret-injection for production.
+    password: "REPLACE_ME"
+    realm: pve
+    # CRITICAL: leave false in production. true disables TLS validation.
+    insecure_skip_verify: false
+    # Optional: pin a specific CA certificate. Recommended over
+    # insecure_skip_verify for self-signed clusters.
+    # ca_cert_pem: |
+    #   -----BEGIN CERTIFICATE-----
+    #   ...
+    #   -----END CERTIFICATE-----
+
+# -----------------------------------------------------------------------------
+# Auth (moxui-side JWT + RBAC)
+# -----------------------------------------------------------------------------
+auth:
+  # JWT issuer + audience. Must match what the client expects.
+  jwt_issuer: moxui
+  jwt_audience: moxui-clients
+  # Token lifetime in seconds. 1h is a reasonable default; shorter
+  # values force re-login more often.
+  jwt_lifetime_secs: 3600
+
+  # RSA key pair for signing JWTs. Generate with:
+  #   openssl genrsa -out /etc/moxui/jwt_priv.pem 4096
+  #   openssl rsa -in /etc/moxui/jwt_priv.pem -pubout -out /etc/moxui/jwt_pub.pem
+  jwt_private_key_pem_path: /etc/moxui/jwt_priv.pem
+  jwt_public_key_pem_path: /etc/moxui/jwt_pub.pem
+
+  # Seed users. Passwords are bcrypt-hashed on first startup if you use
+  # `password` (plaintext); production should ship `password_hash`
+  # (already-hashed) and rotate via a vault. Empty users list is allowed
+  # — all writes return 401.
+  users:
+    - username: admin
+      # role: admin | operator | viewer
+      role: admin
+      # PREFER password_hash. Plaintext is logged as a warning.
+      password: "REPLACE_ME"
+      disabled: false
+
+    - username: operator
+      role: operator
+      password: "REPLACE_ME"
+      disabled: false
+
+    - username: viewer
+      role: viewer
+      password: "REPLACE_ME"
+      disabled: false

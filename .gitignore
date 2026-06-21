@@ -64,3 +64,4 @@ profiles/moxui-*/
 # Team docs (LOCAL-ONLY — use ~/.hermes/shared/moxui/ for team coordination instead)
 docs/TEAM.mdmoxui.db.audit
 *.db.audit
+*.deb

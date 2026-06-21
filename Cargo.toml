@@ -1,6 +1,6 @@
 [package]
 name = "moxui"
-version = "0.1.0-alpha"
+version = "0.1.0"
 edition = "2021"
 rust-version = "1.78"
 license = "MIT"
@@ -135,6 +135,13 @@ lto = "fat"
 codegen-units = 1
 strip = true
 panic = "abort"
+
+# Release with debug info — use for profiling or when crash reports need
+# backtraces. Significantly larger binary than plain `release`.
+[profile.release-debug]
+inherits = "release"
+debug = true
+strip = false
 
 [profile.dev]
 opt-level = 0
