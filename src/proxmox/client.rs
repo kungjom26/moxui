@@ -13,6 +13,11 @@ use crate::proxmox::retry::RetryPolicy;
 
 use reqwest::Client;
 
+/// Timeout (seconds) for [`ProxmoxClient::ping`] — bounded so a slow or
+/// unreachable cluster cannot stall endpoints that probe reachability
+/// (e.g. `/readyz`).
+pub const PING_TIMEOUT_SECS: u64 = 3;
+
 /// Proxmox API client for one cluster.
 pub struct ProxmoxClient {
     /// Cluster configuration.
@@ -215,9 +220,22 @@ impl ProxmoxClient {
     ///
     /// Returns `Ok(())` on any 2xx (ticket can be acquired AND version returns).
     /// On failure, the circuit breaker is updated.
+    ///
+    /// Bounded by a short timeout (`PING_TIMEOUT`) so a slow/unreachable
+    /// cluster does not stall `/readyz` or other endpoints that depend on
+    /// reachability.
     pub async fn ping(&self) -> AppResult<()> {
-        let _: crate::proxmox::types::Version = self.get("version").await?;
-        Ok(())
+        // Clone the ticket future into a timeout-wrapped block. We can't
+        // wrap the whole call in `timeout` because `self` is borrowed for
+        // the entire duration.
+        let ping = self.get::<crate::proxmox::types::Version>("version");
+        match tokio::time::timeout(Duration::from_secs(PING_TIMEOUT_SECS), ping).await {
+            Ok(Ok(_)) => Ok(()),
+            Ok(Err(e)) => Err(e),
+            Err(_elapsed) => Err(AppError::Proxmox(format!(
+                "ping timed out after {PING_TIMEOUT_SECS}s"
+            ))),
+        }
     }
 }
 

@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::RwLock;
 
+use crate::audit::AuditStore;
 use crate::config::Config;
 use crate::proxmox::ProxmoxClient;
 
@@ -58,6 +59,8 @@ pub struct AppState {
     pub clients: Arc<Vec<ProxmoxClient>>,
     /// Cached readiness results per cluster name (TTL: `READINESS_CACHE_TTL`).
     readiness: Arc<RwLock<HashMap<String, (ClusterStatus, Instant)>>>,
+    /// SQLite-backed audit log store. Cloned for each handler — cheap.
+    pub audit: Arc<AuditStore>,
 }
 
 impl AppState {
@@ -65,11 +68,12 @@ impl AppState {
     ///
     /// Build the `Vec<ProxmoxClient>` ahead of time (e.g. in `main`) so
     /// handler timeouts/failures happen at startup, not on first request.
-    pub fn new(config: Config, clients: Vec<ProxmoxClient>) -> Self {
+    pub fn new(config: Config, clients: Vec<ProxmoxClient>, audit: Arc<AuditStore>) -> Self {
         Self {
             config: Arc::new(config),
             clients: Arc::new(clients),
             readiness: Arc::new(RwLock::new(HashMap::new())),
+            audit,
         }
     }
 
@@ -164,7 +168,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_state_creation_empty() {
-        let state = AppState::new(test_config(), vec![]);
+        let audit = std::sync::Arc::new(crate::audit::AuditStore::open_in_memory().unwrap());
+        let state = AppState::new(test_config(), vec![], audit);
         assert_eq!(state.config.server.bind, "0.0.0.0:8080");
         assert_eq!(state.clients.len(), 0);
         assert!(state.client("anything").is_none());
@@ -193,7 +198,8 @@ mod tests {
         };
         let c1 = ProxmoxClient::new(cluster1).await.unwrap();
         let c2 = ProxmoxClient::new(cluster2).await.unwrap();
-        let state = AppState::new(cfg, vec![c1, c2]);
+        let audit = std::sync::Arc::new(crate::audit::AuditStore::open_in_memory().unwrap());
+        let state = AppState::new(cfg, vec![c1, c2], audit);
 
         assert_eq!(state.clients.len(), 2);
         assert!(state.client("homelab").is_some());
@@ -204,7 +210,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_readiness_with_no_clusters_is_ready() {
-        let state = AppState::new(test_config(), vec![]);
+        let audit = std::sync::Arc::new(crate::audit::AuditStore::open_in_memory().unwrap());
+        let state = AppState::new(test_config(), vec![], audit);
         let snap = state.readiness().await;
         assert!(snap.all_healthy(), "empty cluster list should be ready");
         assert_eq!(snap.clusters.len(), 0);

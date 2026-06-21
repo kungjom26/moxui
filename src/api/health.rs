@@ -88,4 +88,90 @@ mod tests {
         // Type-level test: signature unchanged.
         let _: fn(State<AppState>) -> _ = livez;
     }
+
+    /// End-to-end: spin up the router in-process, hit `/health` (GET —
+    /// should NOT be audited) and a non-existent POST endpoint (non-2xx —
+    /// SHOULD be audited), then verify the audit row.
+    #[tokio::test]
+    async fn test_router_audits_state_changing_or_non_2xx() {
+        use crate::audit::AuditStore;
+        use crate::config::{DatabaseConfig, LoggingConfig, ServerConfig};
+        use crate::state::AppState;
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
+        let audit = std::sync::Arc::new(AuditStore::open_in_memory().unwrap());
+        let cfg = crate::config::Config {
+            server: ServerConfig {
+                bind: "127.0.0.1:0".to_string(),
+                workers: 0,
+            },
+            database: DatabaseConfig {
+                path: ":memory:".to_string(),
+                max_connections: 1,
+                run_migrations: false,
+            },
+            logging: LoggingConfig {
+                level: "info".to_string(),
+                format: "pretty".to_string(),
+            },
+            clusters: vec![],
+        };
+        let state = AppState::new(cfg, vec![], audit.clone());
+        let app = crate::api::router(state);
+
+        // 1. GET /health → 200, should NOT be audited (read-only + 2xx).
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let request_id = resp
+            .headers()
+            .get(crate::audit::middleware::REQUEST_ID_HEADER)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
+        assert!(request_id.is_some(), "missing X-Request-Id header");
+
+        // 2. GET /api/v1/vms → 200, should NOT be audited (read-only + 2xx).
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/vms")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // 3. POST /api/v1/vms → 405 (no POST handler) → SHOULD be audited.
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/vms")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
+
+        // Verify only the non-2xx POST was audited.
+        assert_eq!(audit.count().unwrap(), 1, "only one audit row should exist");
+        let rid = request_id.as_deref().unwrap();
+        let entry = audit.find_by_request_id(rid).unwrap();
+        // GETs have no row → entry should be None.
+        assert!(entry.is_none(), "GET /health should not be audited");
+    }
 }

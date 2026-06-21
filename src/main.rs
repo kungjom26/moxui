@@ -6,6 +6,7 @@ use std::process::ExitCode;
 
 use clap::Parser;
 
+use moxui::audit::AuditStore;
 use moxui::config::Config;
 use moxui::proxmox::ProxmoxClient;
 use moxui::state::AppState;
@@ -92,8 +93,20 @@ async fn main() -> ExitCode {
     }
     tracing::info!(count = clients.len(), "Proxmox clients built");
 
+    // Initialize audit log store (SQLite). Uses the configured DB path with
+    // a `.audit` suffix so it sits next to the main DB but is easy to find.
+    let audit_path = format!("{}.audit", config.database.path);
+    let audit = match AuditStore::open(&audit_path) {
+        Ok(s) => std::sync::Arc::new(s),
+        Err(e) => {
+            tracing::error!(error = %e, path = %audit_path, "Failed to open audit store");
+            return ExitCode::from(1);
+        }
+    };
+    tracing::info!(path = %audit_path, "Audit log store opened");
+
     // Create application state
-    let state = AppState::new(config.clone(), clients);
+    let state = AppState::new(config.clone(), clients, audit);
 
     // Build router
     let app = moxui::api::router(state);
