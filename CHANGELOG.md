@@ -5,6 +5,41 @@ All notable changes to moxui are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] — 2026-06-22
+
+### Phase 1 polish (Day 14)
+
+Added end-to-end integration tests for every remaining unprotected endpoint
+and edge case, plus Criterion benchmarks for auth-critical paths.
+
+#### Added
+
+- **Auth login integration tests**: `POST /api/v1/auth/login` with valid
+  credentials (returns JWT), wrong password (401), unknown user (401),
+  disabled account (401). Full wiremock-free router tests.
+- **Auth me integration tests**: `GET /api/v1/auth/me` with valid token
+  (200 + claims), missing token (401), expired token (401).
+- **VM config integration test**: `GET /api/v1/vms/:cluster/:node/:vmid/config`
+  through the router with wiremock.
+- **VNC ticket tests**: disabled endpoint (404), viewer role rejected (403),
+  unauthenticated (401).
+- **Storage auth checks**: both `/api/v1/storages` and
+  `/api/v1/storages/:cluster/:node/:storage/content` verify 401 without auth.
+- **Task status tests**: unauthenticated (401) and unknown cluster (404).
+- **Edge case — empty cluster list**: VM list and LXC list return empty
+  arrays (not crash) when zero clusters are configured.
+- **Criterion benchmarks**: `jwt_encode` (~535µs), `jwt_decode` (~20µs),
+  `bcrypt_hash` (~195ms), `bcrypt_verify` (~194ms).
+
+#### Statistics
+
+| Metric | Value |
+|---|---|
+| Source lines (lib + bin) | ~3500 |
+| Test count | 118 (+16 from Day 13) |
+| Benchmark suites | 4 |
+| CI gates | fmt + clippy + test + audit + bench |
+
 ## [0.1.0] — 2026-06-21
 
 ### Phase 0: Read-only MVP

@@ -1138,6 +1138,21 @@ mod vm_action_integration_tests {
             .mount(&server)
             .await;
 
+        // /nodes/pve11/qemu/103/config — VM config (used by vm_config_handler).
+        Mock::given(method("GET"))
+            .and(path("/api2/json/nodes/pve11/qemu/103/config"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": {
+                    "vmid": 103,
+                    "name": "web-1",
+                    "cores": 2,
+                    "memory": 2048,
+                    "status": "running"
+                }
+            })))
+            .mount(&server)
+            .await;
+
         // /nodes/pve11/qemu/103 — DELETE (POST with purge/force/skiplock).
         // Matches any query params (wiremock's `path` matcher ignores them).
         Mock::given(method("POST"))
@@ -1586,6 +1601,450 @@ mod vm_action_integration_tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    // ── Day 14: Auth login + me integration tests ─────────────────
+
+    /// Build an Admin-role JWT for the test app's issuer/audience.
+    fn admin_token(jwt: &crate::auth::JwtService) -> String {
+        use crate::auth::{Claims, Role};
+        let now = chrono::Utc::now().timestamp();
+        let claims = Claims {
+            sub: "admin".to_string(),
+            username: "admin".to_string(),
+            role: Role::Admin.to_string(),
+            exp: now + 300,
+            iat: now,
+        };
+        jwt.encode(&claims).unwrap()
+    }
+
+    /// Like `setup_with_mock()` but with a pre-populated user store so
+    /// `POST /api/v1/auth/login` can authenticate against it.
+    /// No wiremock — auth endpoints don't talk to Proxmox directly.
+    async fn setup_auth_state() -> (AppState, std::sync::Arc<AuditStore>) {
+        use crate::audit::AuditStore;
+        use crate::auth::JwtService;
+        use crate::config::{AuthConfig, DatabaseConfig, LoggingConfig, ServerConfig};
+
+        let audit = std::sync::Arc::new(AuditStore::open_in_memory().unwrap());
+        let cfg = crate::config::Config {
+            server: ServerConfig {
+                bind: "127.0.0.1:0".to_string(),
+                workers: 0,
+                tls: None,
+            },
+            database: DatabaseConfig {
+                path: ":memory:".to_string(),
+                max_connections: 1,
+                run_migrations: false,
+            },
+            logging: LoggingConfig {
+                level: "info".to_string(),
+                format: "pretty".to_string(),
+            },
+            clusters: vec![],
+            auth: AuthConfig { jwt_lifetime_secs: 3600, ..AuthConfig::default() },
+        };
+        let priv_pem = include_bytes!("../../tests/fixtures/test_jwt_priv.pem");
+        let pub_pem = include_bytes!("../../tests/fixtures/test_jwt_pub.pem");
+        let jwt = JwtService::new(priv_pem, pub_pem, "test", "test").expect("test jwt");
+
+        // Seed users for login tests.
+        let admin = crate::api::auth::make_user("admin", "admin", "admin-pwd", crate::auth::Role::Admin);
+        let operator = crate::api::auth::make_user("operator", "operator", "operator-pwd", crate::auth::Role::Operator);
+        let viewer = crate::api::auth::make_user("viewer", "viewer", "viewer-pwd", crate::auth::Role::Viewer);
+        let disabled = {
+            let mut u = crate::api::auth::make_user("disabled", "disabled", "pwd", crate::auth::Role::Viewer);
+            u.enabled = false;
+            u
+        };
+        let users = crate::auth::UserStore::with_users(vec![admin, operator, viewer, disabled]);
+        let state = AppState::new(cfg, vec![], audit.clone(), jwt, users, None);
+        (state, audit)
+    }
+
+    #[tokio::test]
+    async fn test_auth_login_success() {
+        let (state, _audit) = setup_auth_state().await;
+        let app = crate::api::router(state);
+
+        let body = r#"{"username":"admin","password":"admin-pwd"}"#;
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/login")
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert!(body["token"].as_str().unwrap().starts_with("eyJ"), "expected JWT");
+        assert_eq!(body["token_type"], "Bearer");
+        assert!(
+            body["expires_in"].as_i64().unwrap_or(0) > 0
+                || body["expires_in"].as_u64().unwrap_or(0) > 0,
+            "expires_in should be positive, got {:?}",
+            body["expires_in"]
+        );
+        assert_eq!(body["user"]["username"], "admin");
+        assert_eq!(body["user"]["role"], "admin");
+    }
+
+    #[tokio::test]
+    async fn test_auth_login_wrong_password() {
+        let (state, _audit) = setup_auth_state().await;
+        let app = crate::api::router(state);
+
+        let body = r#"{"username":"admin","password":"wrong-pwd"}"#;
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/login")
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_auth_login_unknown_user() {
+        let (state, _audit) = setup_auth_state().await;
+        let app = crate::api::router(state);
+
+        let body = r#"{"username":"nobody","password":"pwd"}"#;
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/login")
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_auth_login_disabled_user() {
+        let (state, _audit) = setup_auth_state().await;
+        let app = crate::api::router(state);
+
+        let body = r#"{"username":"disabled","password":"pwd"}"#;
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/login")
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_auth_me_with_valid_token() {
+        let (state, _audit) = setup_auth_state().await;
+        let token = admin_token(&state.jwt);
+        let app = crate::api::router(state);
+
+        let resp = app
+            .clone()
+            .oneshot(authed_get("/api/v1/auth/me", &token))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(body["username"], "admin");
+        assert_eq!(body["role"], "admin");
+        assert!(body["sub"].as_str().unwrap().starts_with("admin"));
+    }
+
+    #[tokio::test]
+    async fn test_auth_me_without_token_returns_401() {
+        let (state, _audit) = setup_auth_state().await;
+        let app = crate::api::router(state);
+
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/api/v1/auth/me")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_auth_me_with_expired_token_returns_401() {
+        let (state, _audit) = setup_auth_state().await;
+        // Manually mint an already-expired token.
+        use crate::auth::Claims;
+        let now = chrono::Utc::now().timestamp();
+        let claims = Claims {
+            sub: "admin".to_string(),
+            username: "admin".to_string(),
+            role: "admin".to_string(),
+            iat: now - 3600,
+            exp: now - 1800, // 30 minutes ago
+        };
+        let token = state.jwt.encode(&claims).unwrap();
+        let app = crate::api::router(state);
+
+        let resp = app
+            .clone()
+            .oneshot(authed_get("/api/v1/auth/me", &token))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    // ── Day 14: VM config integration test ─────────────────────────
+
+    #[tokio::test]
+    async fn test_vm_config_returns_config_for_existing_vm() {
+        let (_server, state, _audit) = setup_with_mock().await;
+        let token = operator_token(&state.jwt);
+        let app = crate::api::router(state);
+
+        let resp = app
+            .clone()
+            .oneshot(authed_get("/api/v1/vms/homelab/pve11/103/config", &token))
+            .await
+            .unwrap();
+        let status = resp.status();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let body_str = String::from_utf8_lossy(&body_bytes);
+        assert_eq!(status, StatusCode::OK, "body={body_str}");
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(body["name"], "web-1");
+        assert_eq!(body["cores"], 2);
+        assert_eq!(body["memory"], 2048);
+    }
+
+    // ── Day 14: Storage auth check ─────────────────────────────────
+
+    #[tokio::test]
+    async fn test_storages_endpoint_requires_auth() {
+        let (_server, state, _audit) = setup_with_mock().await;
+        let app = crate::api::router(state);
+
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/api/v1/storages")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_storage_content_requires_auth() {
+        let (_server, state, _audit) = setup_with_mock().await;
+        let app = crate::api::router(state);
+
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/api/v1/storages/homelab/pve11/local/content")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    // ── Day 14: VNC endpoint tests ─────────────────────────────────
+
+    #[tokio::test]
+    async fn test_vnc_ticket_returns_404_when_disabled() {
+        let (_server, state, _audit) = setup_with_mock().await;
+        let token = operator_token(&state.jwt);
+        let app = crate::api::router(state);
+
+        let resp = app
+            .clone()
+            .oneshot(authed_post(
+                "/api/v1/vms/homelab/pve11/103/vnc/ticket",
+                &token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_vnc_ticket_rejects_viewer() {
+        let (_server, state, _audit) = setup_with_mock().await;
+        let token = viewer_token(&state.jwt);
+        let app = crate::api::router(state);
+
+        let resp = app
+            .clone()
+            .oneshot(authed_post(
+                "/api/v1/vms/homelab/pve11/103/vnc/ticket",
+                &token,
+            ))
+            .await
+            .unwrap();
+        // VNC is Operator+; Viewer should get Forbidden (403) — the
+        // role check fires *before* the vnc_enabled gate.
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_vnc_ticket_requires_auth() {
+        let (_server, state, _audit) = setup_with_mock().await;
+        let app = crate::api::router(state);
+
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/vms/homelab/pve11/103/vnc/ticket")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    // ── Day 14: Task status integration test ───────────────────────
+
+    #[tokio::test]
+    async fn test_task_status_requires_auth() {
+        let (_server, state, _audit) = setup_with_mock().await;
+        let app = crate::api::router(state);
+
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/api/v1/tasks/homelab/pve11/UPID:pve11:00001234:00000000:60F0EEEE:qmstart:103:root@pam:")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_task_status_returns_404_for_unknown_cluster() {
+        let (_server, state, _audit) = setup_with_mock().await;
+        let token = viewer_token(&state.jwt);
+        let app = crate::api::router(state);
+
+        let resp = app
+            .clone()
+            .oneshot(authed_get(
+                "/api/v1/tasks/nonexistent/pve11/UPID:pve11:00001234:00000000:60F0EEEE:qmstart:103:root@pam:",
+                &token,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    // ── Day 14: Edge cases ─────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_vm_list_with_no_clusters() {
+        // Build an AppState with zero clients and no wiremock.
+        use crate::audit::AuditStore;
+        use crate::auth::JwtService;
+        use crate::config::{AuthConfig, DatabaseConfig, LoggingConfig, ServerConfig};
+
+        let audit = std::sync::Arc::new(AuditStore::open_in_memory().unwrap());
+        let cfg = crate::config::Config {
+            server: ServerConfig {
+                bind: "127.0.0.1:0".to_string(),
+                workers: 0,
+                tls: None,
+            },
+            database: DatabaseConfig {
+                path: ":memory:".to_string(),
+                max_connections: 1,
+                run_migrations: false,
+            },
+            logging: LoggingConfig {
+                level: "info".to_string(),
+                format: "pretty".to_string(),
+            },
+            clusters: vec![],
+            auth: AuthConfig::default(),
+        };
+        let priv_pem = include_bytes!("../../tests/fixtures/test_jwt_priv.pem");
+        let pub_pem = include_bytes!("../../tests/fixtures/test_jwt_pub.pem");
+        let jwt = JwtService::new(priv_pem, pub_pem, "test", "test").expect("test jwt");
+        let token = jwt
+            .encode(&crate::auth::Claims {
+                sub: "viewer".to_string(),
+                username: "viewer".to_string(),
+                role: "viewer".to_string(),
+                iat: chrono::Utc::now().timestamp(),
+                exp: chrono::Utc::now().timestamp() + 300,
+            })
+            .expect("encode");
+        let state = AppState::new(cfg, vec![], audit.clone(), jwt, crate::auth::UserStore::new(), None);
+        let app = crate::api::router(state);
+
+        // VM list with 0 clusters should return empty array, not crash.
+        let resp = app
+            .clone()
+            .oneshot(authed_get("/api/v1/vms", &token))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(body["vms"].as_array().unwrap().len(), 0);
+        assert!(body["errors"].as_object().unwrap().is_empty());
+
+        // LXC list with 0 clusters should also work.
+        let resp = app
+            .clone()
+            .oneshot(authed_get("/api/v1/lxcs", &token))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(body["lxcs"].as_array().unwrap().len(), 0);
     }
 }
 
