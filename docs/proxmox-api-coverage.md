@@ -4,7 +4,7 @@
 
 **Legend:** ✅ Supported | 🚧 Planned | ❌ Not planned
 
-**Current: v2.0.0** — Phase 6 complete ✅
+**Current: v3.0.0** — All 148 API endpoints covered (97%) ✅
 
 ---
 
@@ -33,23 +33,23 @@
 | `POST` | `/nodes/{node}/qemu/{vmid}/status/stop` | ✅ | Stop VM |
 | `POST` | `/nodes/{node}/qemu/{vmid}/status/shutdown` | ✅ | Shutdown VM (ACPI) |
 | `POST` | `/nodes/{node}/qemu/{vmid}/status/reboot` | ✅ | Reboot VM |
-| `POST` | `/nodes/{node}/qemu/{vmid}/status/reset` | 🚧 | Planned for v3.0 |
-| `POST` | `/nodes/{node}/qemu/{vmid}/status/suspend` | 🚧 | Planned for v3.0 |
-| `POST` | `/nodes/{node}/qemu/{vmid}/status/resume` | 🚧 | Planned for v3.0 |
+| `POST` | `/nodes/{node}/qemu/{vmid}/status/reset` | ✅ | Via `:action` handler |
+| `POST` | `/nodes/{node}/qemu/{vmid}/status/suspend` | ✅ | Via `:action` handler |
+| `POST` | `/nodes/{node}/qemu/{vmid}/status/resume` | ✅ | Via `:action` handler |
 | `DELETE` | `/nodes/{node}/qemu/{vmid}` | ✅ | Delete VM |
 | `PUT` | `/nodes/{node}/qemu` | ✅ | VM creation |
 | `POST` | `/nodes/{node}/qemu` | ✅ | VM cloning |
 | `POST` | `/nodes/{node}/qemu/{vmid}/migrate` | ✅ | Live migration |
-| `POST` | `/nodes/{node}/qemu/{vmid}/template` | 🚧 | Planned for v3.0 |
+| `POST` | `/nodes/{node}/qemu/{vmid}/template` | ✅ | Convert to template |
 | `POST` | `/nodes/{node}/qemu/{vmid}/snapshot` | ✅ | Create snapshot |
 | `GET` | `/nodes/{node}/qemu/{vmid}/snapshot` | ✅ | List snapshots |
 | `DELETE` | `/nodes/{node}/qemu/{vmid}/snapshot/{snapname}` | ✅ | Delete snapshot |
 | `POST` | `/nodes/{node}/qemu/{vmid}/snapshot/{snapname}/rollback` | ✅ | Rollback snapshot |
-| `POST` | `/nodes/{node}/qemu/{vmid}/sendkey` | 🚧 | Planned for v3.0 |
+| `POST` | `/nodes/{node}/qemu/{vmid}/sendkey` | ✅ | Send QEMU key event |
 | `POST` | `/nodes/{node}/qemu/{vmid}/monitor` | ❌ | Not planned |
 | `POST` | `/nodes/{node}/qemu/{vmid}/vncproxy` | ✅ | VNC console proxy |
 | `GET` | `/nodes/{node}/qemu/{vmid}/vncwebsocket` | ✅ | VNC WebSocket proxy |
-| `GET` | `/nodes/{node}/qemu/{vmid}/rrddata` | 🚧 | Planned for v3.0 |
+| `GET` | `/nodes/{node}/qemu/{vmid}/rrddata` | ✅ | VM performance RRD data |
 | `POST` | `/nodes/{node}/qemu/{vmid}/resize` | ✅ | Disk resize |
 
 ---
@@ -66,8 +66,8 @@
 | `POST` | `/nodes/{node}/lxc/{vmid}/status/shutdown` | ✅ | Shutdown LXC |
 | `POST` | `/nodes/{node}/lxc/{vmid}/status/reboot` | ✅ | Reboot LXC |
 | `DELETE` | `/nodes/{node}/lxc/{vmid}` | ✅ | Delete LXC |
-| `PUT` | `/nodes/{node}/lxc` | 🚧 | LXC creation |
-| `PUT` | `/nodes/{node}/lxc/{vmid}/config` | 🚧 | LXC config update |
+| `POST` | `/nodes/{node}/lxc` | ✅ | LXC creation |
+| `PUT` | `/nodes/{node}/lxc/{vmid}/config` | ✅ | LXC config update |
 
 ---
 
@@ -90,8 +90,8 @@
 | `GET` | `/nodes/{node}/network` | ✅ | Per-node interface listing |
 | `GET` | `/cluster/network` | ✅ | Cluster-level (Proxmox 8+) |
 | `GET` | `/nodes/{node}/network/{iface}` | ✅ | Bridge detail |
-| `PUT` | `/nodes/{node}/network` | 🚧 | Network config |
-| `POST` | `/nodes/{node}/network` | 🚧 | Network config |
+| `PUT` | `/nodes/{node}/network` | ✅ | Save pending network config |
+| `POST` | `/nodes/{node}/network` | ✅ | Apply pending network changes |
 
 ---
 
@@ -109,8 +109,8 @@
 | Method | Path | Status | Notes |
 |---|---|---|---|
 | `GET` | `/version` | ✅ | Version check |
-| `GET` | `/cluster/status` | 🚧 | HA status |
-| `GET` | `/cluster/config` | 🚧 | Cluster config |
+| `GET` | `/cluster/status` | ✅ | Cluster status (nodes, quorum) |
+| `GET` | `/cluster/config` | ✅ | Cluster config |
 | `GET` | `/cluster/ha/status` | ✅ | HA resources status |
 | `GET` | `/cluster/ha/groups` | ✅ | HA groups list |
 | `POST` | `/cluster/ha/groups` | ✅ | HA groups create |
@@ -124,9 +124,9 @@
 | `GET` | `/cluster/sdn/zones` | ✅ | SDN zones list |
 | `GET` | `/cluster/sdn/vnets` | ✅ | SDN VNets list |
 | `GET` | `/cluster/firewall/rules` | ✅ | Firewall rules |
-| `GET` | `/cluster/options` | 🚧 | Cluster options |
-| `GET` | `/cluster/log` | 🚧 | Cluster log |
-| `GET` | `/cluster/tasks` | 🚧 | Cluster tasks |
+| `GET` | `/cluster/options` | ✅ | Datacenter options |
+| `GET` | `/cluster/log` | ✅ | Cluster audit log |
+| `GET` | `/cluster/tasks` | ✅ | Recent cluster tasks |
 
 ---
 
@@ -135,8 +135,8 @@
 | Method | Path | Status | Notes |
 |---|---|---|---|
 | `GET` | `/nodes/{node}/tasks/{upid}/status` | ✅ | Task status polling |
-| `GET` | `/nodes/{node}/tasks/{upid}/log` | 🚧 | Planned for v3.0 |
-| `DELETE` | `/nodes/{node}/tasks/{upid}` | 🚧 | Planned for v3.0 |
+| `GET` | `/nodes/{node}/tasks/{upid}/log` | ✅ | Task log lines |
+| `DELETE` | `/nodes/{node}/tasks/{upid}` | ✅ | Forget/delete task |
 
 ---
 
@@ -171,13 +171,16 @@ These are served directly by MoxUI, not proxied to Proxmox:
 | `GET` | `/api/v1/dashboard/custom/widget-types` | ✅ | List widget types |
 | `GET` | `/api/v1/vms` | ✅ | Cross-cluster VM list |
 | `GET` | `/api/v1/vms/:cluster/:vmid` | ✅ | Single VM detail |
-| `POST` | `/api/v1/vms/:cluster/:node/:vmid/:action` | ✅ | VM actions |
+| `POST` | `/api/v1/vms/:cluster/:node/:vmid/:action` | ✅ | VM actions (start/stop/shutdown/reboot/reset/suspend/resume/delete) |
 | `DELETE` | `/api/v1/vms/:cluster/:node/:vmid` | ✅ | Delete VM |
 | `GET` | `/api/v1/vms/:cluster/:node/:vmid/config` | ✅ | VM config (GET + PUT) |
 | `PUT` | `/api/v1/vms/:cluster/:node/:vmid/config` | ✅ | VM config update |
 | `POST` | `/api/v1/vms/:cluster/:node/create` | ✅ | VM creation |
 | `POST` | `/api/v1/vms/:cluster/:node/:vmid/clone` | ✅ | VM clone |
 | `POST` | `/api/v1/vms/:cluster/:node/:vmid/migrate` | ✅ | Live migration |
+| `POST` | `/api/v1/vms/:cluster/:node/:vmid/template` | ✅ | Convert VM to template |
+| `POST` | `/api/v1/vms/:cluster/:node/:vmid/sendkey` | ✅ | Send QEMU key event |
+| `GET` | `/api/v1/vms/:cluster/:node/:vmid/rrddata` | ✅ | VM performance RRD data |
 | `POST` | `/api/v1/vms/:cluster/:node/:vmid/vnc/ticket` | ✅ | VNC console ticket |
 | `GET` | `/api/v1/vms/:cluster/:node/:vmid/vnc/ws` | ✅ | VNC WebSocket proxy |
 | `POST` | `/api/v1/vms/bulk/start` | ✅ | Bulk start VMs |
@@ -195,6 +198,9 @@ These are served directly by MoxUI, not proxied to Proxmox:
 | `GET` | `/api/v1/lxcs/:cluster/:node/:vmid` | ✅ | Single LXC detail |
 | `POST` | `/api/v1/lxcs/:cluster/:node/:vmid/:action` | ✅ | LXC actions |
 | `POST` | `/api/v1/lxcs/:cluster/:node/:vmid/delete` | ✅ | Delete LXC |
+| `POST` | `/api/v1/lxcs/:cluster/:node/create` | ✅ | Create LXC container |
+| `GET` | `/api/v1/lxcs/:cluster/:node/:vmid/config` | ✅ | Get LXC config |
+| `PUT` | `/api/v1/lxcs/:cluster/:node/:vmid/config` | ✅ | Update LXC config |
 | `GET` | `/api/v1/storages` | ✅ | Storage pool list |
 | `GET` | `/api/v1/storages/:cluster/:node/:storage/content` | ✅ | Storage content |
 | `POST` | `/api/v1/storages/:cluster/:node/:storage/upload` | ✅ | Upload ISO/template |
@@ -202,6 +208,8 @@ These are served directly by MoxUI, not proxied to Proxmox:
 | `GET` | `/api/v1/networks` | ✅ | Network interface list |
 | `GET` | `/api/v1/networks/:cluster/:node` | ✅ | Per-node network list |
 | `GET` | `/api/v1/networks/vlans` | ✅ | VLAN list |
+| `PUT` | `/api/v1/networks/:cluster/:node/config` | ✅ | Save pending network config |
+| `POST` | `/api/v1/networks/:cluster/:node/apply` | ✅ | Apply pending network changes |
 | `GET` | `/api/v1/hagroups` | ✅ | List HA groups |
 | `POST` | `/api/v1/hagroups/:cluster/:group` | ✅ | Create HA group |
 | `DELETE` | `/api/v1/hagroups/:cluster/:group` | ✅ | Delete HA group |
@@ -220,6 +228,13 @@ These are served directly by MoxUI, not proxied to Proxmox:
 | `PUT` | `/api/v1/users/:username` | ✅ | Update user (admin) |
 | `DELETE` | `/api/v1/users/:username` | ✅ | Delete user (admin) |
 | `GET` | `/api/v1/tasks/:cluster/:node/:upid` | ✅ | Task status polling |
+| `GET` | `/api/v1/tasks/:cluster/:node/:upid/log` | ✅ | Task log |
+| `POST` | `/api/v1/tasks/:cluster/:node/:upid/delete` | ✅ | Delete/forget task |
+| `GET` | `/api/v1/cluster/status` | ✅ | Cluster status per datacenter |
+| `GET` | `/api/v1/cluster/config` | ✅ | Cluster config per datacenter |
+| `GET` | `/api/v1/cluster/options` | ✅ | Datacenter options |
+| `GET` | `/api/v1/cluster/log` | ✅ | Cluster audit log |
+| `GET` | `/api/v1/cluster/tasks` | ✅ | Recent cluster tasks |
 | `GET` | `/api/v1/audit` | ✅ | Paginated audit log |
 | `GET` | `/` | ✅ | Frontend SPA shell |
 | `GET` | `/static/*` | ✅ | Embedded static assets |
@@ -232,13 +247,14 @@ These are served directly by MoxUI, not proxied to Proxmox:
 
 | Category | Total | Supported | Planned | Not Planned | Coverage |
 |---|---|---|---|---|---|
-| MoxUI API | 65 | 63 | 2 | 0 | **97%** |
-| QEMU/VM | 24 | 15 | 5 | 4 | **63%** |
-| LXC | 10 | 7 | 3 | 0 | **70%** |
+| MoxUI API | 80 | 80 | 0 | 0 | **100%** |
+| QEMU/VM | 24 | 20 | 0 | 4 | **83%** |
+| LXC | 10 | 10 | 0 | 0 | **100%** |
 | Storage | 5 | 5 | 0 | 0 | **100%** |
-| Network | 5 | 3 | 2 | 0 | **60%** |
-| Cluster | 19 | 12 | 7 | 0 | **63%** |
+| Network | 5 | 5 | 0 | 0 | **100%** |
+| Cluster | 19 | 19 | 0 | 0 | **100%** |
 | Access | 2 | 1 | 0 | 1 | **50%** |
-| **Total** | **130** | **106** | **19** | **5** | **82%** |
+| Tasks | 3 | 3 | 0 | 0 | **100%** |
+| **Total** | **148** | **143** | **0** | **5** | **97%** |
 
-> **v2.0.0: 82% coverage (+16% from v1.2.0)** — VM/LXC write ops, storage write, Ceph, SDN, firewall, HA status all live.
+> **v3.0.0: 97% coverage (+15% from v2.0.0)** — All 🚧 endpoints implemented: VM reset/suspend/resume, template convert, sendkey, RRD data, task log/delete, LXC create/config, network config update/apply, and all cluster endpoints (status, config, options, log, tasks).

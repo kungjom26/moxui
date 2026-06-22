@@ -885,6 +885,395 @@ pub struct UploadResponse {
     pub msg: Option<String>,
 }
 
+// ---------------------------------------------------------------------------
+// VM RRD data entry (from /nodes/{node}/qemu/{vmid}/rrddata)
+// ---------------------------------------------------------------------------
+/// A single time-series data point from Proxmox's RRD (Round Robin Database).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RrdDataEntry {
+    /// Unix timestamp.
+    pub time: u64,
+    /// CPU usage (fraction of a core, 0.0 – 1.0 per vCPU × `cpus`).
+    #[serde(default)]
+    pub cpu: Option<f64>,
+    /// Memory used in bytes.
+    #[serde(default)]
+    pub mem: Option<u64>,
+    /// Max memory in bytes.
+    #[serde(default)]
+    pub maxmem: Option<u64>,
+    /// Disk used in bytes.
+    #[serde(default)]
+    pub disk: Option<u64>,
+    /// Max disk in bytes.
+    #[serde(default)]
+    pub maxdisk: Option<u64>,
+    /// Network received bytes.
+    #[serde(default)]
+    pub netin: Option<u64>,
+    /// Network transmitted bytes.
+    #[serde(default)]
+    pub netout: Option<u64>,
+    /// Disk read bytes.
+    #[serde(default)]
+    pub diskread: Option<u64>,
+    /// Disk write bytes.
+    #[serde(default)]
+    pub diskwrite: Option<u64>,
+}
+
+// ---------------------------------------------------------------------------
+// Task log entry (from /nodes/{node}/tasks/{upid}/log)
+// ---------------------------------------------------------------------------
+/// A single log line for a Proxmox task.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TaskLogEntry {
+    /// Line number.
+    pub line: u32,
+    /// Unix timestamp of the log line.
+    pub t: u64,
+    /// Log message text.
+    pub msg: String,
+}
+
+// ---------------------------------------------------------------------------
+// LXC create request (POST /nodes/{node}/lxc)
+// ---------------------------------------------------------------------------
+/// Request parameters for creating a new LXC container.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CreateLxcRequest {
+    /// VM ID (auto-assigned if not specified).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vmid: Option<u32>,
+    /// Container hostname.
+    pub hostname: String,
+    /// OS template or ACI file.
+    pub ostemplate: String,
+    /// Storage pool for the root disk.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub storage: Option<String>,
+    /// Memory limit in MiB.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory: Option<u64>,
+    /// Number of CPU cores.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cores: Option<u32>,
+    /// Root password (for password-based auth).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+    /// Root filesystem volume (e.g. `local-lvm:8`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rootfs: Option<String>,
+    /// Network configuration string (e.g. `name=eth0,bridge=vmbr0,ip=dhcp`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub net: Option<String>,
+    /// Force creation (overwrite VMID if conflicting).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub force: Option<bool>,
+    /// Whether to create an unprivileged container.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unprivileged: Option<bool>,
+    /// Container description / notes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Start on boot (0/1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub onboot: Option<u8>,
+    /// Tags (semicolon-separated).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tags: Option<String>,
+    /// SSH public keys for the root user (newline-separated).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssh_public_keys: Option<String>,
+    /// Start container after creation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<bool>,
+}
+
+impl CreateLxcRequest {
+    /// Convert to query params for Proxmox's form-style API.
+    pub fn to_query_params(&self) -> Vec<(String, String)> {
+        let mut params = Vec::new();
+        params.push(("hostname".to_string(), self.hostname.clone()));
+        params.push(("ostemplate".to_string(), self.ostemplate.clone()));
+        if let Some(v) = self.vmid { params.push(("vmid".to_string(), v.to_string())); }
+        if let Some(ref v) = self.storage { params.push(("storage".to_string(), v.clone())); }
+        if let Some(v) = self.memory { params.push(("memory".to_string(), v.to_string())); }
+        if let Some(v) = self.cores { params.push(("cores".to_string(), v.to_string())); }
+        if let Some(ref v) = self.password { params.push(("password".to_string(), v.clone())); }
+        if let Some(ref v) = self.rootfs { params.push(("rootfs".to_string(), v.clone())); }
+        if let Some(ref v) = self.net { params.push(("net".to_string(), v.clone())); }
+        if let Some(v) = self.force { params.push(("force".to_string(), if v { "1" } else { "0" }.to_string())); }
+        if let Some(v) = self.unprivileged { params.push(("unprivileged".to_string(), if v { "1" } else { "0" }.to_string())); }
+        if let Some(ref v) = self.description { params.push(("description".to_string(), v.clone())); }
+        if let Some(v) = self.onboot { params.push(("onboot".to_string(), v.to_string())); }
+        if let Some(ref v) = self.tags { params.push(("tags".to_string(), v.clone())); }
+        if let Some(ref v) = self.ssh_public_keys { params.push(("ssh-public-keys".to_string(), v.clone())); }
+        if let Some(v) = self.start { params.push(("start".to_string(), if v { "1" } else { "0" }.to_string())); }
+        params
+    }
+}
+
+// ---------------------------------------------------------------------------
+// LXC config update (PUT /nodes/{node}/lxc/{vmid}/config)
+// ---------------------------------------------------------------------------
+/// Parameters for updating an LXC container's configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LxcConfig {
+    /// Container hostname.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hostname: Option<String>,
+    /// Memory limit in MiB.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory: Option<u64>,
+    /// Number of CPU cores.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cores: Option<u32>,
+    /// Container description / notes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Start on boot (0/1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub onboot: Option<u8>,
+    /// Tags (semicolon-separated).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tags: Option<String>,
+    /// DNS nameserver.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nameserver: Option<String>,
+    /// DNS search domain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub searchdomain: Option<String>,
+    /// Root filesystem volume config.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rootfs: Option<String>,
+    /// Network configuration string.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub net: Option<String>,
+    /// Features string (e.g. `keyctl=1,nesting=1`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub features: Option<String>,
+    /// Protection flag (0/1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protection: Option<u8>,
+    /// Start container after update.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<bool>,
+    /// Hook script path.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hookscript: Option<String>,
+    /// Console mode (0/1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub console: Option<u8>,
+    /// Swap memory in MiB.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub swap: Option<u32>,
+}
+
+impl LxcConfig {
+    /// Convert to query params for Proxmox's form-style PUT API.
+    pub fn to_query_params(&self) -> Vec<(String, String)> {
+        let mut params = Vec::new();
+        if let Some(ref v) = self.hostname { params.push(("hostname".to_string(), v.clone())); }
+        if let Some(v) = self.memory { params.push(("memory".to_string(), v.to_string())); }
+        if let Some(v) = self.cores { params.push(("cores".to_string(), v.to_string())); }
+        if let Some(ref v) = self.description { params.push(("description".to_string(), v.clone())); }
+        if let Some(v) = self.onboot { params.push(("onboot".to_string(), v.to_string())); }
+        if let Some(ref v) = self.tags { params.push(("tags".to_string(), v.clone())); }
+        if let Some(ref v) = self.nameserver { params.push(("nameserver".to_string(), v.clone())); }
+        if let Some(ref v) = self.searchdomain { params.push(("searchdomain".to_string(), v.clone())); }
+        if let Some(ref v) = self.rootfs { params.push(("rootfs".to_string(), v.clone())); }
+        if let Some(ref v) = self.net { params.push(("net".to_string(), v.clone())); }
+        if let Some(ref v) = self.features { params.push(("features".to_string(), v.clone())); }
+        if let Some(v) = self.protection { params.push(("protection".to_string(), v.to_string())); }
+        if let Some(v) = self.start { params.push(("start".to_string(), if v { "1" } else { "0" }.to_string())); }
+        if let Some(ref v) = self.hookscript { params.push(("hookscript".to_string(), v.clone())); }
+        if let Some(v) = self.console { params.push(("console".to_string(), v.to_string())); }
+        if let Some(v) = self.swap { params.push(("swap".to_string(), v.to_string())); }
+        params
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Cluster status (from /cluster/status)
+// ---------------------------------------------------------------------------
+/// Cluster quorum status summary.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ClusterStatusEntry {
+    /// Whether the cluster is quorate.
+    #[serde(default)]
+    pub quorate: Option<bool>,
+    /// Cluster name.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Cluster config version.
+    #[serde(default)]
+    pub version: Option<u64>,
+    /// Total number of nodes in the cluster.
+    pub nodes: u32,
+    /// Current quorum count.
+    pub quorum: u32,
+    /// Flags.
+    #[serde(default)]
+    pub flags: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Cluster configuration info (from /cluster/config)
+// ---------------------------------------------------------------------------
+/// Cluster-wide configuration properties.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ClusterConfigInfo {
+    /// Cluster name.
+    #[serde(default)]
+    pub cluster: Option<String>,
+    /// Cluster network CIDR.
+    #[serde(default)]
+    pub cluster_network: Option<String>,
+    /// Cluster network limit netfilter.
+    #[serde(default)]
+    pub cluster_limit_netfilter: Option<String>,
+    /// HA (High Availability) enabled.
+    #[serde(default)]
+    pub ha_enabled: Option<bool>,
+    /// HA mode.
+    #[serde(default)]
+    pub ha_mode: Option<String>,
+    /// Configuration type.
+    #[serde(default)]
+    pub r#type: Option<String>,
+    /// Auto-stop delay.
+    #[serde(default)]
+    pub autostop_after: Option<u64>,
+    /// Migration speed limit (MB/s).
+    #[serde(default)]
+    pub migrate_speed: Option<u64>,
+    /// Migration downtime (ms).
+    #[serde(default)]
+    pub migrate_downtime: Option<u64>,
+}
+
+// ---------------------------------------------------------------------------
+// Cluster options (from /cluster/options)
+// ---------------------------------------------------------------------------
+/// Datacenter-wide options.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ClusterOptions {
+    /// MAC address prefix.
+    #[serde(default)]
+    pub mac_prefix: Option<String>,
+    /// Console viewer (e.g. `vv`, `html5`).
+    #[serde(default)]
+    pub console_viewer: Option<String>,
+    /// Default language.
+    #[serde(default)]
+    pub language: Option<String>,
+    /// Default keyboard layout.
+    #[serde(default)]
+    pub keyboard: Option<String>,
+    /// Email `From:` address for system notifications.
+    #[serde(default)]
+    pub email_from: Option<String>,
+    /// Migration type (e.g. `secure`).
+    #[serde(default)]
+    pub migration_type: Option<String>,
+    /// Allow insecure migration.
+    #[serde(default)]
+    pub migration_unsecure: Option<bool>,
+    /// Minimum user password change age (days).
+    #[serde(default)]
+    pub userpw_change_min_age: Option<u32>,
+    /// Maximum user password change age (days).
+    #[serde(default)]
+    pub userpw_change_max_age: Option<u32>,
+    /// Default bandwidth limit (KiB/s).
+    #[serde(default)]
+    pub bwlimit_default: Option<u64>,
+    /// Maximum workers for parallel operations.
+    #[serde(default)]
+    pub max_workers: Option<u32>,
+    /// HA auto-start delay (seconds).
+    #[serde(default)]
+    pub ha_autostart_delay: Option<u32>,
+    /// HA CRS (Cluster Resource Scheduler).
+    #[serde(default)]
+    pub crs_ha: Option<String>,
+    /// Next free VM ID.
+    #[serde(default)]
+    pub next_id: Option<u32>,
+    /// HTTP proxy URL.
+    #[serde(default)]
+    pub http_proxy: Option<String>,
+    /// Console HTTPS-only.
+    #[serde(default)]
+    pub console_https: Option<bool>,
+    /// Maximum VM ID.
+    #[serde(default)]
+    pub max_vmid: Option<u32>,
+    /// Minimum VM ID.
+    #[serde(default)]
+    pub min_vmid: Option<u32>,
+    /// Proxy users.
+    #[serde(default)]
+    pub proxy_users: Option<String>,
+    /// Users group.
+    #[serde(default)]
+    pub users_group: Option<String>,
+    /// Group blacklist.
+    #[serde(default)]
+    pub group_blacklist: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Cluster log entry (from /cluster/log)
+// ---------------------------------------------------------------------------
+/// A single entry from the cluster audit log.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ClusterLogEntry {
+    /// Unix timestamp.
+    pub time: u64,
+    /// Log message.
+    pub msg: String,
+    /// Node name (if local).
+    #[serde(default)]
+    pub node: Option<String>,
+    /// Log tag (e.g. `system`).
+    #[serde(default)]
+    pub tag: Option<String>,
+    /// Priority (lower = more important).
+    #[serde(default)]
+    pub pri: Option<u32>,
+}
+
+// ---------------------------------------------------------------------------
+// Cluster task (from /cluster/tasks)
+// ---------------------------------------------------------------------------
+/// A single task entry from the cluster task list.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ClusterTask {
+    /// Proxmox UPID string.
+    pub upid: String,
+    /// Node name where the task runs.
+    pub node: String,
+    /// PID as a string (Proxmox returns it as string).
+    pub pid: String,
+    /// Process start timestamp.
+    pub pstart: u64,
+    /// Task start time (Unix timestamp).
+    pub starttime: u64,
+    /// Task end time (Unix timestamp).
+    pub endtime: u64,
+    /// Task status (e.g. `OK`, `stopped`, `running`).
+    pub status: String,
+    /// Task type (e.g. `qmstart`, `vzdump`).
+    pub r#type: String,
+    /// User who started the task.
+    pub user: String,
+    /// Task ID (optional, e.g. VMID for per-VM tasks).
+    #[serde(default)]
+    pub id: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -920,5 +1309,196 @@ mod tests {
         assert_eq!(resp.data.name, "test-vm");
         assert_eq!(resp.data.status, "running");
         assert!(resp.data.tags.is_some());
+    }
+
+    // ── v3.0 serialization roundtrip tests ─────────────────────────
+
+    #[test]
+    fn test_rrd_data_entry_roundtrip() {
+        let json = serde_json::json!({
+            "time": 1_700_000_000_u64,
+            "cpu": 0.05,
+            "mem": 1_073_741_824_u64,
+            "maxmem": 2_147_483_648_u64,
+            "disk": 8_589_934_592_u64,
+            "maxdisk": 10_737_418_240_u64,
+            "netin": 1_000_u64,
+            "netout": 500_u64,
+            "diskread": 200_u64,
+            "diskwrite": 300_u64
+        });
+        let entry: RrdDataEntry = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(entry.time, 1_700_000_000);
+        assert_eq!(entry.cpu, Some(0.05));
+        assert_eq!(entry.mem, Some(1_073_741_824));
+        assert_eq!(entry.maxmem, Some(2_147_483_648));
+        assert_eq!(entry.disk, Some(8_589_934_592));
+        assert_eq!(entry.netin, Some(1_000));
+        assert_eq!(entry.netout, Some(500));
+        assert_eq!(entry.diskread, Some(200));
+        assert_eq!(entry.diskwrite, Some(300));
+        // Roundtrip: serialize back and verify it matches
+        let serialized = serde_json::to_value(entry).unwrap();
+        assert_eq!(serialized, json);
+    }
+
+    #[test]
+    fn test_rrd_data_entry_partial_roundtrip() {
+        // Only required fields (time) — optional fields should be None
+        let json = serde_json::json!({
+            "time": 1_700_000_000_u64
+        });
+        let entry: RrdDataEntry = serde_json::from_value(json).unwrap();
+        assert_eq!(entry.time, 1_700_000_000);
+        assert!(entry.cpu.is_none());
+        assert!(entry.mem.is_none());
+        assert!(entry.maxmem.is_none());
+        assert!(entry.disk.is_none());
+        assert!(entry.maxdisk.is_none());
+        assert!(entry.netin.is_none());
+        assert!(entry.netout.is_none());
+        assert!(entry.diskread.is_none());
+        assert!(entry.diskwrite.is_none());
+    }
+
+    #[test]
+    fn test_task_log_entry_roundtrip() {
+        let json = serde_json::json!({
+            "line": 1,
+            "t": 1_700_000_000_u64,
+            "msg": "Starting task UPID:pve11:..."
+        });
+        let entry: TaskLogEntry = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(entry.line, 1);
+        assert_eq!(entry.t, 1_700_000_000);
+        assert_eq!(entry.msg, "Starting task UPID:pve11:...");
+        let serialized = serde_json::to_value(entry).unwrap();
+        assert_eq!(serialized, json);
+    }
+
+    #[test]
+    fn test_cluster_status_entry_roundtrip() {
+        let json = serde_json::json!({
+            "quorate": true,
+            "name": "test-cluster",
+            "version": 5_u64,
+            "nodes": 3_u32,
+            "quorum": 3_u32,
+            "flags": ""
+        });
+        let entry: ClusterStatusEntry = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(entry.quorate, Some(true));
+        assert_eq!(entry.name.as_deref(), Some("test-cluster"));
+        assert_eq!(entry.version, Some(5));
+        assert_eq!(entry.nodes, 3);
+        assert_eq!(entry.quorum, 3);
+        assert_eq!(entry.flags.as_deref(), Some(""));
+        let serialized = serde_json::to_value(entry).unwrap();
+        assert_eq!(serialized, json);
+    }
+
+    #[test]
+    fn test_cluster_config_info_roundtrip() {
+        let json = serde_json::json!({
+            "cluster": "test-cluster",
+            "cluster_network": "10.0.0.0/24",
+            "cluster_limit_netfilter": null,
+            "ha_enabled": true,
+            "ha_mode": null,
+            "type": "cluster",
+            "autostop_after": null,
+            "migrate_speed": null,
+            "migrate_downtime": null
+        });
+        let entry: ClusterConfigInfo = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(entry.cluster.as_deref(), Some("test-cluster"));
+        assert_eq!(entry.cluster_network.as_deref(), Some("10.0.0.0/24"));
+        assert_eq!(entry.ha_enabled, Some(true));
+        assert_eq!(entry.r#type.as_deref(), Some("cluster"));
+        let serialized = serde_json::to_value(entry).unwrap();
+        assert_eq!(serialized, json);
+    }
+
+    #[test]
+    fn test_cluster_options_roundtrip() {
+        let json = serde_json::json!({
+            "mac_prefix": "BC:24:11",
+            "console_viewer": null,
+            "language": "en",
+            "keyboard": "en-us",
+            "email_from": null,
+            "migration_type": null,
+            "migration_unsecure": null,
+            "userpw_change_min_age": null,
+            "userpw_change_max_age": null,
+            "bwlimit_default": null,
+            "max_workers": 5_u32,
+            "ha_autostart_delay": null,
+            "crs_ha": null,
+            "next_id": 100_u32,
+            "http_proxy": null,
+            "console_https": null,
+            "max_vmid": null,
+            "min_vmid": null,
+            "proxy_users": null,
+            "users_group": null,
+            "group_blacklist": null
+        });
+        let entry: ClusterOptions = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(entry.mac_prefix.as_deref(), Some("BC:24:11"));
+        assert_eq!(entry.language.as_deref(), Some("en"));
+        assert_eq!(entry.keyboard.as_deref(), Some("en-us"));
+        assert_eq!(entry.max_workers, Some(5));
+        assert_eq!(entry.next_id, Some(100));
+        let serialized = serde_json::to_value(entry).unwrap();
+        assert_eq!(serialized, json);
+    }
+
+    #[test]
+    fn test_cluster_log_entry_roundtrip() {
+        let json = serde_json::json!({
+            "time": 1_700_000_000_u64,
+            "msg": "Cluster quorum gained",
+            "node": "pve11",
+            "tag": "system",
+            "pri": 1_u32
+        });
+        let entry: ClusterLogEntry = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(entry.time, 1_700_000_000);
+        assert_eq!(entry.msg, "Cluster quorum gained");
+        assert_eq!(entry.node.as_deref(), Some("pve11"));
+        assert_eq!(entry.tag.as_deref(), Some("system"));
+        assert_eq!(entry.pri, Some(1));
+        let serialized = serde_json::to_value(entry).unwrap();
+        assert_eq!(serialized, json);
+    }
+
+    #[test]
+    fn test_cluster_task_roundtrip() {
+        let json = serde_json::json!({
+            "upid": "UPID:pve11:00001234:00000000:60F0EEEE:qmstart:103:root@pam:",
+            "node": "pve11",
+            "pid": "1234",
+            "pstart": 1_234_567_890_u64,
+            "starttime": 1_700_000_000_u64,
+            "endtime": 1_700_000_100_u64,
+            "status": "OK",
+            "type": "qmstart",
+            "user": "root@pam",
+            "id": "103"
+        });
+        let entry: ClusterTask = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(entry.upid, "UPID:pve11:00001234:00000000:60F0EEEE:qmstart:103:root@pam:");
+        assert_eq!(entry.node, "pve11");
+        assert_eq!(entry.pid, "1234");
+        assert_eq!(entry.pstart, 1_234_567_890);
+        assert_eq!(entry.starttime, 1_700_000_000);
+        assert_eq!(entry.endtime, 1_700_000_100);
+        assert_eq!(entry.status, "OK");
+        assert_eq!(entry.r#type, "qmstart");
+        assert_eq!(entry.user, "root@pam");
+        assert_eq!(entry.id.as_deref(), Some("103"));
+        let serialized = serde_json::to_value(entry).unwrap();
+        assert_eq!(serialized, json);
     }
 }

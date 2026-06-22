@@ -3,6 +3,7 @@
 pub mod audit;
 pub mod auth;
 pub mod ceph;
+pub mod cluster;
 pub mod dashboard;
 pub mod firewall;
 pub mod hagroups;
@@ -107,6 +108,11 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/sdn/vnets", get(sdn::sdn_vnets))
         .route("/api/v1/hagroups/status", get(hagroups::ha_status))
         .route("/api/v1/networks/vlans", get(networks::list_vlans))
+        .route("/api/v1/cluster/status", get(cluster::cluster_status))
+        .route("/api/v1/cluster/config", get(cluster::cluster_config))
+        .route("/api/v1/cluster/options", get(cluster::cluster_options))
+        .route("/api/v1/cluster/log", get(cluster::cluster_log))
+        .route("/api/v1/cluster/tasks", get(cluster::cluster_tasks))
         .route_layer(from_fn_with_state(state.clone(), require_auth));
 
     // Cluster-scoped routes — require auth + cluster-level permissions.
@@ -211,6 +217,46 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v1/replication/:cluster/:vmid/status",
             get(replication::get_replication_status),
+        )
+        // ── VM template, sendkey, rrddata routes ──
+        .route(
+            "/api/v1/vms/:cluster/:node/:vmid/template",
+            post(vms::vm_template_handler),
+        )
+        .route(
+            "/api/v1/vms/:cluster/:node/:vmid/sendkey",
+            post(vms::vm_sendkey_handler),
+        )
+        .route(
+            "/api/v1/vms/:cluster/:node/:vmid/rrddata",
+            get(vms::vm_rrddata_handler),
+        )
+        // ── Task log + delete routes ──
+        .route(
+            "/api/v1/tasks/:cluster/:node/:upid/log",
+            get(tasks::task_log),
+        )
+        .route(
+            "/api/v1/tasks/:cluster/:node/:upid/delete",
+            post(tasks::task_delete),
+        )
+        // ── LXC create + config routes ──
+        .route(
+            "/api/v1/lxcs/:cluster/:node/create",
+            post(lxcs::lxc_create_handler),
+        )
+        .route(
+            "/api/v1/lxcs/:cluster/:node/:vmid/config",
+            get(lxcs::lxc_config_handler).put(lxcs::lxc_update_config_handler),
+        )
+        // ── Network config routes ──
+        .route(
+            "/api/v1/networks/:cluster/:node/config",
+            put(networks::network_config_update_handler),
+        )
+        .route(
+            "/api/v1/networks/:cluster/:node/apply",
+            post(networks::network_config_apply_handler),
         )
         // require_auth runs first (inner), require_cluster_access runs second (outer).
         .route_layer(from_fn_with_state(state.clone(), require_cluster_access))

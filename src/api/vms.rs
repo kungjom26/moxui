@@ -228,7 +228,7 @@ pub async fn vm_action_handler(
         return Err(err);
     }
     match action.as_str() {
-        "start" | "stop" | "shutdown" | "reboot" => {
+        "start" | "stop" | "shutdown" | "reboot" | "reset" | "suspend" | "resume" => {
             vm_action(&state, &cluster, &node, vmid, &action).await
         }
         "delete" => {
@@ -239,7 +239,7 @@ pub async fn vm_action_handler(
             vm_delete(&state, &cluster, &node, vmid, opts).await
         }
         other => Err(AppError::BadRequest(format!(
-            "unknown action '{other}'; expected start|stop|shutdown|reboot|delete"
+            "unknown action '{other}'; expected start|stop|shutdown|reboot|reset|suspend|resume|delete"
         ))),
     }
 }
@@ -993,6 +993,117 @@ pub async fn resize_disk_handler(
         "upid": upid,
         "cluster": cluster,
     })))
+}
+
+/// Request body for `POST /api/v1/vms/:cluster/:node/:vmid/sendkey`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SendkeyRequest {
+    /// Keyboard key to send (e.g. `ctrl-alt-del`, `print-screen`).
+    pub key: String,
+}
+
+/// Query parameters for `GET /api/v1/vms/:cluster/:node/:vmid/rrddata`.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct RrdDataQuery {
+    /// Timeframe for the RRD data. One of `hour`, `day`, `week`, `month`, `year`.
+    /// Defaults to `hour`.
+    #[serde(default = "default_timeframe")]
+    pub timeframe: String,
+}
+
+fn default_timeframe() -> String {
+    "hour".to_string()
+}
+
+/// `POST /api/v1/vms/:cluster/:node/:vmid/template` — convert a VM to a template.
+///
+/// Requires `Operator` role or higher. Converts the VM into a read-only
+/// template that can be used for cloning.
+pub async fn vm_template_handler(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Path((cluster, node, vmid)): Path<(String, String, u32)>,
+) -> AppResult<Json<VmActionResponse>> {
+    if let Err(resp) = require_role(&auth, Role::Operator) {
+        let status = resp.status();
+        let err = if status == axum::http::StatusCode::FORBIDDEN {
+            AppError::Forbidden("operator role required".into())
+        } else {
+            AppError::Internal(format!("auth middleware returned {status}"))
+        };
+        return Err(err);
+    }
+
+    let client = state
+        .client(&cluster)
+        .ok_or_else(|| AppError::NotFound(format!("cluster '{cluster}' not configured")))?;
+
+    let path = format!("nodes/{node}/qemu/{vmid}/template");
+    let upid: String = client.post(&path).await?;
+
+    Ok(Json(VmActionResponse {
+        vmid,
+        action: "template".to_string(),
+        upid,
+    }))
+}
+
+/// `POST /api/v1/vms/:cluster/:node/:vmid/sendkey` — send a key event to a VM.
+///
+/// Requires `Operator` role or higher. Sends a QEMU key event to the VM
+/// (e.g. `ctrl-alt-del`, `print-screen`).
+pub async fn vm_sendkey_handler(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Path((cluster, node, vmid)): Path<(String, String, u32)>,
+    Json(body): Json<SendkeyRequest>,
+) -> AppResult<Json<VmActionResponse>> {
+    if let Err(resp) = require_role(&auth, Role::Operator) {
+        let status = resp.status();
+        let err = if status == axum::http::StatusCode::FORBIDDEN {
+            AppError::Forbidden("operator role required".into())
+        } else {
+            AppError::Internal(format!("auth middleware returned {status}"))
+        };
+        return Err(err);
+    }
+
+    let client = state
+        .client(&cluster)
+        .ok_or_else(|| AppError::NotFound(format!("cluster '{cluster}' not configured")))?;
+
+    let path = format!("nodes/{node}/qemu/{vmid}/sendkey");
+    let params = vec![("key".to_string(), body.key.clone())];
+    let upid: String = client.post_with_query(&path, params).await?;
+
+    Ok(Json(VmActionResponse {
+        vmid,
+        action: "sendkey".to_string(),
+        upid,
+    }))
+}
+
+/// `GET /api/v1/vms/:cluster/:node/:vmid/rrddata` — fetch RRD data for a VM.
+///
+/// Returns time-series data points for CPU, memory, network, and disk I/O.
+/// Supports optional `?timeframe=hour|day|week|month|year` (default `hour`).
+/// This is a read-only endpoint — no RBAC role check beyond auth middleware.
+pub async fn vm_rrddata_handler(
+    State(state): State<AppState>,
+    Path((cluster, node, vmid)): Path<(String, String, u32)>,
+    Query(query): Query<RrdDataQuery>,
+) -> AppResult<Json<serde_json::Value>> {
+    let client = state
+        .client(&cluster)
+        .ok_or_else(|| AppError::NotFound(format!("cluster '{cluster}' not configured")))?;
+
+    let path = format!(
+        "nodes/{node}/qemu/{vmid}/rrddata?timeframe={}",
+        query.timeframe
+    );
+    let data: serde_json::Value = client.get(&path).await?;
+
+    Ok(Json(data))
 }
 
 #[cfg(test)]

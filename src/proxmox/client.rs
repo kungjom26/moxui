@@ -1130,6 +1130,286 @@ impl ProxmoxClient {
         ];
         self.post_with_query(&path, params).await
     }
+
+    // -------------------------------------------------------------------------
+    // Helpers for PUT / DELETE via the HTTP client directly
+    // -------------------------------------------------------------------------
+
+    /// Issue a DELETE to a Proxmox API endpoint and decode the response.
+    pub async fn delete_json<T>(&self, path: &str) -> AppResult<T>
+    where
+        T: serde::de::DeserializeOwned,
+    {
+        let ticket = self.current_ticket().await?;
+        let url = self.build_url(path);
+        let resp = self
+            .http
+            .delete(&url)
+            .header("Cookie", format!("PVEAuthCookie={}", ticket.ticket))
+            .header("CSRFPreventionToken", &ticket.csrf_token)
+            .send()
+            .await?;
+        self.handle_response::<T>(resp).await
+    }
+
+    /// Issue a PUT with form-style query parameters (Proxmox pattern).
+    pub async fn put_with_query<T>(
+        &self,
+        path: &str,
+        params: Vec<(String, String)>,
+    ) -> AppResult<T>
+    where
+        T: serde::de::DeserializeOwned + Default,
+    {
+        let ticket = self.current_ticket().await?;
+        let url = self.build_url(path);
+        let fut = self
+            .http
+            .put(&url)
+            .query(&params)
+            .header("Cookie", format!("PVEAuthCookie={}", ticket.ticket))
+            .header("CSRFPreventionToken", &ticket.csrf_token)
+            .send();
+        let resp = match tokio::time::timeout(Duration::from_secs(POST_TIMEOUT_SECS), fut).await {
+            Ok(result) => result?,
+            Err(_elapsed) => {
+                return Err(AppError::Proxmox(format!(
+                    "PUT {path} timed out after {POST_TIMEOUT_SECS}s"
+                )))
+            }
+        };
+        self.handle_response::<T>(resp).await
+    }
+
+    /// Issue a PUT with a JSON body.
+    pub async fn put_json<T, B>(&self, path: &str, body: &B) -> AppResult<T>
+    where
+        T: serde::de::DeserializeOwned + Default,
+        B: serde::Serialize,
+    {
+        let ticket = self.current_ticket().await?;
+        let url = self.build_url(path);
+        let fut = self
+            .http
+            .put(&url)
+            .json(body)
+            .header("Cookie", format!("PVEAuthCookie={}", ticket.ticket))
+            .header("CSRFPreventionToken", &ticket.csrf_token)
+            .send();
+        let resp = match tokio::time::timeout(Duration::from_secs(POST_TIMEOUT_SECS), fut).await {
+            Ok(result) => result?,
+            Err(_elapsed) => {
+                return Err(AppError::Proxmox(format!(
+                    "PUT {path} timed out after {POST_TIMEOUT_SECS}s"
+                )))
+            }
+        };
+        self.handle_response::<T>(resp).await
+    }
+
+    // -------------------------------------------------------------------------
+    // VM Actions (POST) — simple one-shot actions
+    // -------------------------------------------------------------------------
+
+    /// Reset a VM (force-stop then start).
+    ///
+    /// Proxmox endpoint: `POST /nodes/{node}/qemu/{vmid}/status/reset`.
+    /// Returns the UPID as a string.
+    pub async fn reset_vm(&self, node: &str, vmid: u32) -> AppResult<String> {
+        let path = format!("nodes/{node}/qemu/{vmid}/status/reset");
+        self.post(&path).await
+    }
+
+    /// Suspend a VM (save state to disk / RAM).
+    ///
+    /// Proxmox endpoint: `POST /nodes/{node}/qemu/{vmid}/status/suspend`.
+    /// Returns the UPID as a string.
+    pub async fn suspend_vm(&self, node: &str, vmid: u32) -> AppResult<String> {
+        let path = format!("nodes/{node}/qemu/{vmid}/status/suspend");
+        self.post(&path).await
+    }
+
+    /// Resume a VM (wake from suspend).
+    ///
+    /// Proxmox endpoint: `POST /nodes/{node}/qemu/{vmid}/status/resume`.
+    /// Returns the UPID as a string.
+    pub async fn resume_vm(&self, node: &str, vmid: u32) -> AppResult<String> {
+        let path = format!("nodes/{node}/qemu/{vmid}/status/resume");
+        self.post(&path).await
+    }
+
+    /// Convert a VM to a template.
+    ///
+    /// Proxmox endpoint: `POST /nodes/{node}/qemu/{vmid}/template`.
+    /// Returns the UPID as a string.
+    pub async fn template_convert(&self, node: &str, vmid: u32) -> AppResult<String> {
+        let path = format!("nodes/{node}/qemu/{vmid}/template");
+        self.post(&path).await
+    }
+
+    /// Send a keystroke to a VM (via QEMU monitor).
+    ///
+    /// Proxmox endpoint: `POST /nodes/{node}/qemu/{vmid}/sendkey`.
+    /// Requires the `key` parameter (e.g. `ctrl-alt-delete`).
+    /// Returns the UPID as a string.
+    pub async fn sendkey(&self, node: &str, vmid: u32, key: &str) -> AppResult<String> {
+        let path = format!("nodes/{node}/qemu/{vmid}/sendkey");
+        let params = vec![("key".to_string(), key.to_string())];
+        self.post_no_default(&path, params).await
+    }
+
+    // -------------------------------------------------------------------------
+    // VM Data
+    // -------------------------------------------------------------------------
+
+    /// Fetch RRD (Round Robin Database) time-series data for a VM.
+    ///
+    /// Proxmox endpoint: `GET /nodes/{node}/qemu/{vmid}/rrddata?timeframe={timeframe}`.
+    ///
+    /// # Arguments
+    /// * `node` — Proxmox node name.
+    /// * `vmid` — VM ID.
+    /// * `timeframe` — One of `hour`, `day`, `week`, `month`, `year`.
+    pub async fn vm_rrddata(
+        &self,
+        node: &str,
+        vmid: u32,
+        timeframe: &str,
+    ) -> AppResult<Vec<crate::proxmox::types::RrdDataEntry>> {
+        let path = format!("nodes/{node}/qemu/{vmid}/rrddata?timeframe={timeframe}");
+        self.get(&path).await
+    }
+
+    // -------------------------------------------------------------------------
+    // Tasks
+    // -------------------------------------------------------------------------
+
+    /// Fetch the log for a Proxmox task.
+    ///
+    /// Proxmox endpoint: `GET /nodes/{node}/tasks/{upid}/log`.
+    /// Returns a list of log lines.
+    pub async fn task_log(
+        &self,
+        node: &str,
+        upid: &str,
+    ) -> AppResult<Vec<crate::proxmox::types::TaskLogEntry>> {
+        let path = format!("nodes/{node}/tasks/{upid}/log");
+        self.get(&path).await
+    }
+
+    /// Delete a finished task from the task list.
+    ///
+    /// Proxmox endpoint: `DELETE /nodes/{node}/tasks/{upid}`.
+    /// Returns an empty string on success.
+    pub async fn delete_task(&self, node: &str, upid: &str) -> AppResult<String> {
+        let path = format!("nodes/{node}/tasks/{upid}");
+        self.delete_json(&path).await
+    }
+
+    // -------------------------------------------------------------------------
+    // LXC (Linux Containers)
+    // -------------------------------------------------------------------------
+
+    /// Create a new LXC container.
+    ///
+    /// Proxmox endpoint: `POST /nodes/{node}/lxc` with form params.
+    /// Accepts a [`CreateLxcRequest`] and converts it to query parameters.
+    /// Returns the UPID as a string.
+    pub async fn lxc_create(
+        &self,
+        node: &str,
+        req: &crate::proxmox::types::CreateLxcRequest,
+    ) -> AppResult<String> {
+        let path = format!("nodes/{node}/lxc");
+        let params = req.to_query_params();
+        self.post_with_query(&path, params).await
+    }
+
+    /// Update an LXC container's configuration.
+    ///
+    /// Proxmox endpoint: `PUT /nodes/{node}/lxc/{vmid}/config` with form params.
+    /// Accepts an [`LxcConfig`] and converts it to query parameters.
+    /// Returns an empty string on success.
+    pub async fn lxc_update_config(
+        &self,
+        node: &str,
+        vmid: u32,
+        config: &crate::proxmox::types::LxcConfig,
+    ) -> AppResult<String> {
+        let path = format!("nodes/{node}/lxc/{vmid}/config");
+        let params = config.to_query_params();
+        self.put_with_query(&path, params).await
+    }
+
+    // -------------------------------------------------------------------------
+    // Network
+    // -------------------------------------------------------------------------
+
+    /// Save pending network configuration changes for a node.
+    ///
+    /// Proxmox endpoint: `PUT /nodes/{node}/network` with JSON body.
+    /// The body is a generic JSON value representing the network config.
+    /// Returns the UPID as a string.
+    pub async fn network_config_update(
+        &self,
+        node: &str,
+        config: &serde_json::Value,
+    ) -> AppResult<String> {
+        let path = format!("nodes/{node}/network");
+        self.put_json(&path, config).await
+    }
+
+    /// Apply pending network configuration changes on a node.
+    ///
+    /// Proxmox endpoint: `POST /nodes/{node}/network` (no body).
+    /// Returns the UPID as a string.
+    pub async fn network_config_apply(&self, node: &str) -> AppResult<String> {
+        let path = format!("nodes/{node}/network");
+        self.post(&path).await
+    }
+
+    // -------------------------------------------------------------------------
+    // Cluster
+    // -------------------------------------------------------------------------
+
+    /// Get cluster status (quorum, nodes, etc.).
+    ///
+    /// Proxmox endpoint: `GET /cluster/status`.
+    pub async fn cluster_status(
+        &self,
+    ) -> AppResult<Vec<crate::proxmox::types::ClusterStatusEntry>> {
+        self.get("cluster/status").await
+    }
+
+    /// Get cluster-wide configuration info.
+    ///
+    /// Proxmox endpoint: `GET /cluster/config`.
+    pub async fn cluster_config_info(
+        &self,
+    ) -> AppResult<crate::proxmox::types::ClusterConfigInfo> {
+        self.get("cluster/config").await
+    }
+
+    /// Get datacenter-wide options.
+    ///
+    /// Proxmox endpoint: `GET /cluster/options`.
+    pub async fn cluster_options(&self) -> AppResult<crate::proxmox::types::ClusterOptions> {
+        self.get("cluster/options").await
+    }
+
+    /// Get the cluster audit log.
+    ///
+    /// Proxmox endpoint: `GET /cluster/log`.
+    pub async fn cluster_log(&self) -> AppResult<Vec<crate::proxmox::types::ClusterLogEntry>> {
+        self.get("cluster/log").await
+    }
+
+    /// Get the cluster task list.
+    ///
+    /// Proxmox endpoint: `GET /cluster/tasks`.
+    pub async fn cluster_tasks(&self) -> AppResult<Vec<crate::proxmox::types::ClusterTask>> {
+        self.get("cluster/tasks").await
+    }
 }
 
 #[cfg(test)]
@@ -1427,6 +1707,615 @@ mod tests {
             .await
             .unwrap();
         assert!(upid.starts_with("UPID:pve11:"));
+    }
+
+    // ── v3.0: VM action POST tests (reset / suspend / resume) ───────────
+
+    #[tokio::test]
+    async fn test_reset_vm_against_wiremock() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api2/json/access/ticket"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": {
+                    "ticket": "PVE:root@pam:deadbeef::SIG",
+                    "csrf_token": "csrf-token-abc",
+                    "username": "root@pam",
+                    "expires_at": 9_999_999_999_i64
+                }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/api2/json/nodes/pve11/qemu/103/status/reset"))
+            .and(header("Cookie", "PVEAuthCookie=PVE:root@pam:deadbeef::SIG"))
+            .and(header("CSRFPreventionToken", "csrf-token-abc"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": "UPID:pve11:00001234:00000000:60F0EEEE:qmreset:103:root@pam:"
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let config = ClusterConfig {
+            name: "mock".to_string(),
+            url: server.uri(),
+            username: "root@pam".to_string(),
+            password: secrecy::SecretString::new("test-pw".to_string().into_boxed_str()),
+            realm: "pam".to_string(),
+            insecure_skip_verify: true,
+            ca_cert_pem: None,
+        };
+        let client = ProxmoxClient::new(config).await.unwrap();
+        let upid = client.reset_vm("pve11", 103).await.unwrap();
+        assert!(upid.starts_with("UPID:pve11:"));
+        assert!(upid.contains("qmreset"));
+    }
+
+    #[tokio::test]
+    async fn test_suspend_vm_against_wiremock() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api2/json/access/ticket"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": {
+                    "ticket": "PVE:root@pam:deadbeef::SIG",
+                    "csrf_token": "csrf-token-abc",
+                    "username": "root@pam",
+                    "expires_at": 9_999_999_999_i64
+                }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/api2/json/nodes/pve11/qemu/103/status/suspend"))
+            .and(header("Cookie", "PVEAuthCookie=PVE:root@pam:deadbeef::SIG"))
+            .and(header("CSRFPreventionToken", "csrf-token-abc"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": "UPID:pve11:00001234:00000000:60F0EEEE:qmsuspend:103:root@pam:"
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let config = ClusterConfig {
+            name: "mock".to_string(),
+            url: server.uri(),
+            username: "root@pam".to_string(),
+            password: secrecy::SecretString::new("test-pw".to_string().into_boxed_str()),
+            realm: "pam".to_string(),
+            insecure_skip_verify: true,
+            ca_cert_pem: None,
+        };
+        let client = ProxmoxClient::new(config).await.unwrap();
+        let upid = client.suspend_vm("pve11", 103).await.unwrap();
+        assert!(upid.starts_with("UPID:pve11:"));
+        assert!(upid.contains("qmsuspend"));
+    }
+
+    #[tokio::test]
+    async fn test_resume_vm_against_wiremock() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api2/json/access/ticket"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": {
+                    "ticket": "PVE:root@pam:deadbeef::SIG",
+                    "csrf_token": "csrf-token-abc",
+                    "username": "root@pam",
+                    "expires_at": 9_999_999_999_i64
+                }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/api2/json/nodes/pve11/qemu/103/status/resume"))
+            .and(header("Cookie", "PVEAuthCookie=PVE:root@pam:deadbeef::SIG"))
+            .and(header("CSRFPreventionToken", "csrf-token-abc"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": "UPID:pve11:00001234:00000000:60F0EEEE:qmresume:103:root@pam:"
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let config = ClusterConfig {
+            name: "mock".to_string(),
+            url: server.uri(),
+            username: "root@pam".to_string(),
+            password: secrecy::SecretString::new("test-pw".to_string().into_boxed_str()),
+            realm: "pam".to_string(),
+            insecure_skip_verify: true,
+            ca_cert_pem: None,
+        };
+        let client = ProxmoxClient::new(config).await.unwrap();
+        let upid = client.resume_vm("pve11", 103).await.unwrap();
+        assert!(upid.starts_with("UPID:pve11:"));
+        assert!(upid.contains("qmresume"));
+    }
+
+    // ── v3.0: Task log (GET) ────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_task_log_against_wiremock() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api2/json/access/ticket"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": {
+                    "ticket": "PVE:root@pam:deadbeef::SIG",
+                    "csrf_token": "csrf-token-abc",
+                    "username": "root@pam",
+                    "expires_at": 9_999_999_999_i64
+                }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let upid = "UPID:pve11:00001234:00000000:60F0EEEE:qmstart:103:root@pam:";
+        Mock::given(method("GET"))
+            .and(path(&format!("/api2/json/nodes/pve11/tasks/{upid}/log")))
+            .and(header("Cookie", "PVEAuthCookie=PVE:root@pam:deadbeef::SIG"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [
+                    {"line": 1, "t": 1_700_000_000_u64, "msg": "Starting task"},
+                    {"line": 2, "t": 1_700_000_001_u64, "msg": "Completed successfully"}
+                ]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let config = ClusterConfig {
+            name: "mock".to_string(),
+            url: server.uri(),
+            username: "root@pam".to_string(),
+            password: secrecy::SecretString::new("test-pw".to_string().into_boxed_str()),
+            realm: "pam".to_string(),
+            insecure_skip_verify: true,
+            ca_cert_pem: None,
+        };
+        let client = ProxmoxClient::new(config).await.unwrap();
+        let log = client.task_log("pve11", upid).await.unwrap();
+        assert_eq!(log.len(), 2);
+        assert_eq!(log[0].line, 1);
+        assert_eq!(log[0].msg, "Starting task");
+        assert_eq!(log[1].line, 2);
+        assert_eq!(log[1].msg, "Completed successfully");
+    }
+
+    // ── v3.0: Delete task (DELETE) ──────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_delete_task_against_wiremock() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api2/json/access/ticket"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": {
+                    "ticket": "PVE:root@pam:deadbeef::SIG",
+                    "csrf_token": "csrf-token-abc",
+                    "username": "root@pam",
+                    "expires_at": 9_999_999_999_i64
+                }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let upid = "UPID:pve11:00001234:00000000:60F0EEEE:qmstart:103:root@pam:";
+        Mock::given(method("DELETE"))
+            .and(path(&format!("/api2/json/nodes/pve11/tasks/{upid}")))
+            .and(header("Cookie", "PVEAuthCookie=PVE:root@pam:deadbeef::SIG"))
+            .and(header("CSRFPreventionToken", "csrf-token-abc"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": ""
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let config = ClusterConfig {
+            name: "mock".to_string(),
+            url: server.uri(),
+            username: "root@pam".to_string(),
+            password: secrecy::SecretString::new("test-pw".to_string().into_boxed_str()),
+            realm: "pam".to_string(),
+            insecure_skip_verify: true,
+            ca_cert_pem: None,
+        };
+        let client = ProxmoxClient::new(config).await.unwrap();
+        let result = client.delete_task("pve11", upid).await.unwrap();
+        assert_eq!(result, "");
+    }
+
+    // ── v3.0: VM RRD data (GET with timeframe) ─────────────────────────
+
+    #[tokio::test]
+    async fn test_vm_rrddata_against_wiremock() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api2/json/access/ticket"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": {
+                    "ticket": "PVE:root@pam:deadbeef::SIG",
+                    "csrf_token": "csrf-token-abc",
+                    "username": "root@pam",
+                    "expires_at": 9_999_999_999_i64
+                }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/api2/json/nodes/pve11/qemu/103/rrddata"))
+            .and(header("Cookie", "PVEAuthCookie=PVE:root@pam:deadbeef::SIG"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [
+                    {
+                        "time": 1_700_000_000_u64,
+                        "cpu": 0.05,
+                        "mem": 1_073_741_824_u64,
+                        "maxmem": 2_147_483_648_u64,
+                        "disk": 8_589_934_592_u64,
+                        "maxdisk": 10_737_418_240_u64,
+                        "netin": 1_000_u64,
+                        "netout": 500_u64,
+                        "diskread": 200_u64,
+                        "diskwrite": 300_u64
+                    },
+                    {
+                        "time": 1_700_000_001_u64,
+                        "cpu": 0.12,
+                        "mem": 1_610_612_736_u64,
+                        "maxmem": 2_147_483_648_u64
+                    }
+                ]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let config = ClusterConfig {
+            name: "mock".to_string(),
+            url: server.uri(),
+            username: "root@pam".to_string(),
+            password: secrecy::SecretString::new("test-pw".to_string().into_boxed_str()),
+            realm: "pam".to_string(),
+            insecure_skip_verify: true,
+            ca_cert_pem: None,
+        };
+        let client = ProxmoxClient::new(config).await.unwrap();
+        let data = client.vm_rrddata("pve11", 103, "hour").await.unwrap();
+        assert_eq!(data.len(), 2);
+        assert_eq!(data[0].time, 1_700_000_000);
+        assert_eq!(data[0].cpu, Some(0.05));
+        assert_eq!(data[0].mem, Some(1_073_741_824));
+        assert!(data[0].netin.is_some());
+        assert!(data[1].netin.is_none()); // second entry omits optional fields
+        assert_eq!(data[1].cpu, Some(0.12));
+    }
+
+    // ── v3.0: Cluster GET endpoints ────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_cluster_status_against_wiremock() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api2/json/access/ticket"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": {
+                    "ticket": "PVE:root@pam:deadbeef::SIG",
+                    "csrf_token": "csrf-token-abc",
+                    "username": "root@pam",
+                    "expires_at": 9_999_999_999_i64
+                }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/api2/json/cluster/status"))
+            .and(header("Cookie", "PVEAuthCookie=PVE:root@pam:deadbeef::SIG"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [
+                    {
+                        "quorate": true,
+                        "name": "test-cluster",
+                        "version": 5_u64,
+                        "nodes": 3_u32,
+                        "quorum": 3_u32,
+                        "flags": ""
+                    }
+                ]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let config = ClusterConfig {
+            name: "mock".to_string(),
+            url: server.uri(),
+            username: "root@pam".to_string(),
+            password: secrecy::SecretString::new("test-pw".to_string().into_boxed_str()),
+            realm: "pam".to_string(),
+            insecure_skip_verify: true,
+            ca_cert_pem: None,
+        };
+        let client = ProxmoxClient::new(config).await.unwrap();
+        let status = client.cluster_status().await.unwrap();
+        assert_eq!(status.len(), 1);
+        assert_eq!(status[0].quorate, Some(true));
+        assert_eq!(status[0].name.as_deref(), Some("test-cluster"));
+        assert_eq!(status[0].nodes, 3);
+        assert_eq!(status[0].quorum, 3);
+    }
+
+    #[tokio::test]
+    async fn test_cluster_config_info_against_wiremock() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api2/json/access/ticket"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": {
+                    "ticket": "PVE:root@pam:deadbeef::SIG",
+                    "csrf_token": "csrf-token-abc",
+                    "username": "root@pam",
+                    "expires_at": 9_999_999_999_i64
+                }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/api2/json/cluster/config"))
+            .and(header("Cookie", "PVEAuthCookie=PVE:root@pam:deadbeef::SIG"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": {
+                    "cluster": "test-cluster",
+                    "cluster_network": "10.0.0.0/24",
+                    "ha_enabled": true,
+                    "type": "cluster"
+                }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let config = ClusterConfig {
+            name: "mock".to_string(),
+            url: server.uri(),
+            username: "root@pam".to_string(),
+            password: secrecy::SecretString::new("test-pw".to_string().into_boxed_str()),
+            realm: "pam".to_string(),
+            insecure_skip_verify: true,
+            ca_cert_pem: None,
+        };
+        let client = ProxmoxClient::new(config).await.unwrap();
+        let info = client.cluster_config_info().await.unwrap();
+        assert_eq!(info.cluster.as_deref(), Some("test-cluster"));
+        assert_eq!(info.cluster_network.as_deref(), Some("10.0.0.0/24"));
+        assert_eq!(info.ha_enabled, Some(true));
+        assert_eq!(info.r#type.as_deref(), Some("cluster"));
+    }
+
+    #[tokio::test]
+    async fn test_cluster_options_against_wiremock() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api2/json/access/ticket"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": {
+                    "ticket": "PVE:root@pam:deadbeef::SIG",
+                    "csrf_token": "csrf-token-abc",
+                    "username": "root@pam",
+                    "expires_at": 9_999_999_999_i64
+                }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/api2/json/cluster/options"))
+            .and(header("Cookie", "PVEAuthCookie=PVE:root@pam:deadbeef::SIG"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": {
+                    "mac_prefix": "BC:24:11",
+                    "language": "en",
+                    "keyboard": "en-us",
+                    "next_id": 100_u32,
+                    "max_workers": 5_u32
+                }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let config = ClusterConfig {
+            name: "mock".to_string(),
+            url: server.uri(),
+            username: "root@pam".to_string(),
+            password: secrecy::SecretString::new("test-pw".to_string().into_boxed_str()),
+            realm: "pam".to_string(),
+            insecure_skip_verify: true,
+            ca_cert_pem: None,
+        };
+        let client = ProxmoxClient::new(config).await.unwrap();
+        let opts = client.cluster_options().await.unwrap();
+        assert_eq!(opts.mac_prefix.as_deref(), Some("BC:24:11"));
+        assert_eq!(opts.language.as_deref(), Some("en"));
+        assert_eq!(opts.keyboard.as_deref(), Some("en-us"));
+        assert_eq!(opts.next_id, Some(100));
+        assert_eq!(opts.max_workers, Some(5));
+    }
+
+    #[tokio::test]
+    async fn test_cluster_log_against_wiremock() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api2/json/access/ticket"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": {
+                    "ticket": "PVE:root@pam:deadbeef::SIG",
+                    "csrf_token": "csrf-token-abc",
+                    "username": "root@pam",
+                    "expires_at": 9_999_999_999_i64
+                }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/api2/json/cluster/log"))
+            .and(header("Cookie", "PVEAuthCookie=PVE:root@pam:deadbeef::SIG"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [
+                    {
+                        "time": 1_700_000_000_u64,
+                        "msg": "Cluster quorum gained",
+                        "node": "pve11",
+                        "tag": "system",
+                        "pri": 1_u32
+                    }
+                ]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let config = ClusterConfig {
+            name: "mock".to_string(),
+            url: server.uri(),
+            username: "root@pam".to_string(),
+            password: secrecy::SecretString::new("test-pw".to_string().into_boxed_str()),
+            realm: "pam".to_string(),
+            insecure_skip_verify: true,
+            ca_cert_pem: None,
+        };
+        let client = ProxmoxClient::new(config).await.unwrap();
+        let entries = client.cluster_log().await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].time, 1_700_000_000);
+        assert_eq!(entries[0].msg, "Cluster quorum gained");
+        assert_eq!(entries[0].node.as_deref(), Some("pve11"));
+        assert_eq!(entries[0].tag.as_deref(), Some("system"));
+        assert_eq!(entries[0].pri, Some(1));
+    }
+
+    #[tokio::test]
+    async fn test_cluster_tasks_against_wiremock() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/api2/json/access/ticket"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": {
+                    "ticket": "PVE:root@pam:deadbeef::SIG",
+                    "csrf_token": "csrf-token-abc",
+                    "username": "root@pam",
+                    "expires_at": 9_999_999_999_i64
+                }
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/api2/json/cluster/tasks"))
+            .and(header("Cookie", "PVEAuthCookie=PVE:root@pam:deadbeef::SIG"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [
+                    {
+                        "upid": "UPID:pve11:00001234:00000000:60F0EEEE:qmstart:103:root@pam:",
+                        "node": "pve11",
+                        "pid": "1234",
+                        "pstart": 1_234_567_890_u64,
+                        "starttime": 1_700_000_000_u64,
+                        "endtime": 1_700_000_100_u64,
+                        "status": "OK",
+                        "type": "qmstart",
+                        "user": "root@pam",
+                        "id": "103"
+                    }
+                ]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let config = ClusterConfig {
+            name: "mock".to_string(),
+            url: server.uri(),
+            username: "root@pam".to_string(),
+            password: secrecy::SecretString::new("test-pw".to_string().into_boxed_str()),
+            realm: "pam".to_string(),
+            insecure_skip_verify: true,
+            ca_cert_pem: None,
+        };
+        let client = ProxmoxClient::new(config).await.unwrap();
+        let tasks = client.cluster_tasks().await.unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].upid, "UPID:pve11:00001234:00000000:60F0EEEE:qmstart:103:root@pam:");
+        assert_eq!(tasks[0].node, "pve11");
+        assert_eq!(tasks[0].status, "OK");
+        assert_eq!(tasks[0].r#type, "qmstart");
+        assert_eq!(tasks[0].user, "root@pam");
+        assert_eq!(tasks[0].id.as_deref(), Some("103"));
     }
 }
 

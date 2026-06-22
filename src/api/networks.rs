@@ -16,6 +16,7 @@ use axum::{
 };
 use serde::Serialize;
 
+use crate::auth::{require_role, AuthContext, Role};
 use crate::error::{AppError, AppResult};
 use crate::proxmox::types::NodeNetwork;
 use crate::state::AppState;
@@ -193,4 +194,100 @@ pub async fn list_vlans(State(state): State<AppState>) -> Json<serde_json::Value
         "vlans": vlans,
         "errors": errors,
     }))
+}
+
+/// `PUT /api/v1/networks/:cluster/:node/config` — update network configuration on a node.
+///
+/// Requires `Operator` role or higher. Accepts a JSON body of network
+/// interface configuration and applies it via the Proxmox API.
+pub async fn network_config_update_handler(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Path((cluster, node)): Path<(String, String)>,
+    Json(body): Json<serde_json::Value>,
+) -> AppResult<Json<serde_json::Value>> {
+    if let Err(resp) = require_role(&auth, Role::Operator) {
+        let status = resp.status();
+        let err = if status == axum::http::StatusCode::FORBIDDEN {
+            AppError::Forbidden("operator role required".into())
+        } else {
+            AppError::Internal(format!("auth middleware returned {status}"))
+        };
+        return Err(err);
+    }
+
+    let client = state
+        .client(&cluster)
+        .ok_or_else(|| AppError::NotFound(format!("cluster '{cluster}' not configured")))?;
+
+    // Proxmox expects PUT /nodes/{node}/network with form params.
+    // We flatten the JSON body into query params for post_with_query.
+    let params: Vec<(String, String)> = body
+        .as_object()
+        .map(|map| {
+            map.iter()
+                .filter_map(|(k, v)| {
+                    v.as_str()
+                        .map(|s| (k.clone(), s.to_string()))
+                        .or_else(|| v.as_u64().map(|n| (k.clone(), n.to_string())))
+                        .or_else(|| v.as_f64().map(|n| (k.clone(), n.to_string())))
+                        .or_else(|| {
+                            if v.is_boolean() {
+                                Some((
+                                    k.clone(),
+                                    if v.as_bool().unwrap() { "1" } else { "0" }.to_string(),
+                                ))
+                            } else {
+                                Some((k.clone(), v.to_string()))
+                            }
+                        })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let path = format!("nodes/{node}/network");
+    let result: serde_json::Value = client.post_with_query(&path, params).await?;
+
+    Ok(Json(serde_json::json!({
+        "node": node,
+        "cluster": cluster,
+        "result": result,
+    })))
+}
+
+/// `POST /api/v1/networks/:cluster/:node/apply` — apply pending network changes.
+///
+/// Requires `Operator` role or higher. Tells the Proxmox node to apply
+/// any pending network configuration changes (writes /etc/network/interfaces
+/// and applies the new config).
+pub async fn network_config_apply_handler(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Path((cluster, node)): Path<(String, String)>,
+) -> AppResult<Json<serde_json::Value>> {
+    if let Err(resp) = require_role(&auth, Role::Operator) {
+        let status = resp.status();
+        let err = if status == axum::http::StatusCode::FORBIDDEN {
+            AppError::Forbidden("operator role required".into())
+        } else {
+            AppError::Internal(format!("auth middleware returned {status}"))
+        };
+        return Err(err);
+    }
+
+    let client = state
+        .client(&cluster)
+        .ok_or_else(|| AppError::NotFound(format!("cluster '{cluster}' not configured")))?;
+
+    // Proxmox endpoint: PUT /nodes/{node}/network (to apply changes).
+    // We use post_with_query with an empty params vec.
+    let path = format!("nodes/{node}/network");
+    let result: serde_json::Value = client.post_with_query(&path, Vec::new()).await?;
+
+    Ok(Json(serde_json::json!({
+        "node": node,
+        "cluster": cluster,
+        "result": result,
+    })))
 }

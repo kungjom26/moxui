@@ -154,9 +154,22 @@ Week 8+ │ Phase 6 — Advanced Cluster Management (VM/LXC write ops, LDAP, Cep
 
 ---
 
-## 📦 Phase 7+ — Future (v3.0)
+## 📦 Phase 7+ — Future (v4.0+)
 
 **Goal:** Multi-region, multi-tenancy, cloud, and AI features
+
+### Proposed Features
+- Geographic cluster view
+- Cross-cluster live migration
+- Organizations (multi-tenant isolation)
+- SAML SSO
+- Ansible collection
+- MoxUI Mobile (React Native)
+- CLI tool (moxui-cli)
+- Predictive failure analysis
+- Right-sizing recommendations
+
+See [FUTURE_ROADMAP.md](./FUTURE_ROADMAP.md) for full details.
 
 ---
 
@@ -170,7 +183,9 @@ Week 8+ │ Phase 6 — Advanced Cluster Management (VM/LXC write ops, LDAP, Cep
 | End Week 5 | Phase 3 — Production hardening | ✅ Complete |
 | End Week 6 | Phase 4 — Polish & Community | ✅ Complete |
 | Week 7+ | Phase 5 — Power User Features | ✅ Complete |
-| Week 8+ | Phase 6 — Advanced Cluster Management | ✅ Complete |\n|| v3.0 | Q4 2027 | Multi-region, multi-tenancy, cloud, AI | 🔜 Planning |
+| Week 8+ | Phase 6 — Advanced Cluster Management | ✅ Complete |
+| Q3 2026 | **v3.0 — API Complete** — All Proxmox endpoints | ✅ Complete |
+| Q4 2027+ | v4.0 — Multi-region, multi-tenancy, cloud, AI | 🔜 Planning |
 
 ---
 

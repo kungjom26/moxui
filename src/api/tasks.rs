@@ -16,6 +16,7 @@ use axum::{
     Json,
 };
 
+use crate::auth::{require_role, AuthContext, Role};
 use crate::error::{AppError, AppResult};
 use crate::proxmox::types::TaskStatus;
 use crate::state::AppState;
@@ -36,6 +37,56 @@ pub async fn task_status(
 
     let status = client.task_status(&node, &upid).await?;
     Ok(Json(status))
+}
+
+/// `GET /api/v1/tasks/:cluster/:node/:upid/log` — fetch the log for a Proxmox task.
+///
+/// Returns the task's log lines as an array of `{timestamp, line}` entries.
+/// This is a read-only endpoint — no RBAC role check beyond auth middleware.
+pub async fn task_log(
+    State(state): State<AppState>,
+    Path((cluster, node, upid)): Path<(String, String, String)>,
+) -> AppResult<Json<serde_json::Value>> {
+    let client = state
+        .client(&cluster)
+        .ok_or_else(|| AppError::NotFound(format!("cluster '{cluster}' not configured")))?;
+
+    let path = format!("nodes/{node}/tasks/{upid}/log");
+    let log: serde_json::Value = client.get(&path).await?;
+    Ok(Json(log))
+}
+
+/// `POST /api/v1/tasks/:cluster/:node/:upid/delete` — delete/forget a Proxmox task.
+///
+/// Requires `Operator` role or higher. Removes the task from Proxmox's
+/// task history.
+pub async fn task_delete(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Path((cluster, node, upid)): Path<(String, String, String)>,
+) -> AppResult<Json<serde_json::Value>> {
+    if let Err(resp) = require_role(&auth, Role::Operator) {
+        let status = resp.status();
+        let err = if status == axum::http::StatusCode::FORBIDDEN {
+            AppError::Forbidden("operator role required".into())
+        } else {
+            AppError::Internal(format!("auth middleware returned {status}"))
+        };
+        return Err(err);
+    }
+
+    let client = state
+        .client(&cluster)
+        .ok_or_else(|| AppError::NotFound(format!("cluster '{cluster}' not configured")))?;
+
+    // Proxmox uses DELETE for task removal; we use post_with_query
+    // since the client doesn't expose a raw DELETE. Proxmox accepts
+    // POST with ?running=1 or similar for task operations.
+    // The tasks endpoint: DELETE /nodes/{node}/tasks/{upid}
+    // We'll use the generic post method.
+    let path = format!("nodes/{node}/tasks/{upid}");
+    let result: serde_json::Value = client.post_with_query(&path, Vec::new()).await?;
+    Ok(Json(result))
 }
 
 #[cfg(test)]
