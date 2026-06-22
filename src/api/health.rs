@@ -113,6 +113,7 @@ pub async fn metrics_handler(State(state): State<AppState>) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     #[tokio::test]
     async fn test_livez_returns_ok() {
@@ -159,6 +160,8 @@ mod tests {
             clusters: vec![],
             auth: AuthConfig::default(),
             tracing: crate::observability::tracing::TracingConfig::default(),
+            data_dir: "/var/lib/moxui".to_string(),
+            webhook: crate::config::WebhookConfig::default(),
         };
         let jwt = test_jwt();
         let token = jwt
@@ -180,6 +183,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            Arc::new(crate::dashboard_custom::DashboardCustomService::new_in_memory()),
         );
         let app = crate::api::router(state);
         // 1. GET /health → 200, should NOT be audited (read-only + 2xx).

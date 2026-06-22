@@ -403,6 +403,28 @@ pub struct NodeNetwork {
     pub comments: Option<String>,
 }
 
+/// Proxmox HA group (from `/cluster/ha/groups`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HaGroup {
+    /// HA group name/identifier.
+    pub group: String,
+    /// Comma-separated list of allowed nodes or autofailback target.
+    #[serde(default)]
+    pub nodes: Option<String>,
+    /// Group type (e.g. `"basic"`, `"crs"`, etc.).
+    #[serde(rename = "type", default)]
+    pub kind: Option<String>,
+    /// Free-form comment/description.
+    #[serde(default)]
+    pub comment: Option<String>,
+    /// Whether to fail back to the preferred node automatically (`1` = yes, `0` = no).
+    #[serde(default)]
+    pub nofailback: Option<u8>,
+    /// Whether VMs in this group cannot start on non-restricted nodes (`1` = yes, `0` = no).
+    #[serde(default)]
+    pub restricted: Option<u8>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

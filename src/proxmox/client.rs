@@ -629,6 +629,115 @@ impl ProxmoxClient {
             ))),
         }
     }
+
+    // ── Live Migration ──────────────────────────────────────────────────
+
+    /// Migrate a QEMU VM to another node within the same cluster.
+    ///
+    /// Proxmox endpoint: `POST /nodes/{node}/qemu/{vmid}/migrate`
+    ///
+    /// Returns the Proxmox UPID (e.g. `UPID:pve11:00001234:...`) so the
+    /// caller can poll the task status.
+    pub async fn migrate_vm(
+        &self,
+        node: &str,
+        vmid: u32,
+        target: &str,
+        online: bool,
+    ) -> AppResult<String> {
+        let path = format!("nodes/{node}/qemu/{vmid}/migrate");
+        let params = vec![
+            ("target".to_string(), target.to_string()),
+            (
+                "online".to_string(),
+                if online { "1" } else { "0" }.to_string(),
+            ),
+        ];
+        self.post_with_query(&path, params).await
+    }
+
+    // ── HA Group Management ────────────────────────────────────────────
+
+    /// List all HA groups configured on this cluster.
+    ///
+    /// Proxmox endpoint: `GET /cluster/ha/groups`
+    pub async fn list_ha_groups(&self) -> AppResult<Vec<crate::proxmox::types::HaGroup>> {
+        self.get("cluster/ha/groups").await
+    }
+
+    /// Create or update an HA group.
+    ///
+    /// Proxmox endpoint: `POST /cluster/ha/groups/{group}` with query params.
+    /// Returns a UPID or confirmation string.
+    pub async fn create_ha_group(
+        &self,
+        group: &str,
+        nodes: Option<&str>,
+        comment: Option<&str>,
+        nofailback: bool,
+        restricted: bool,
+    ) -> AppResult<String> {
+        let path = format!("cluster/ha/groups/{group}");
+        let mut params = vec![
+            (
+                "nofailback".to_string(),
+                if nofailback { "1" } else { "0" }.to_string(),
+            ),
+            (
+                "restricted".to_string(),
+                if restricted { "1" } else { "0" }.to_string(),
+            ),
+        ];
+        if let Some(n) = nodes {
+            params.push(("nodes".to_string(), n.to_string()));
+        }
+        if let Some(c) = comment {
+            params.push(("comment".to_string(), c.to_string()));
+        }
+        // Proxmox uses POST for create and set (upsert).
+        self.post_with_query(&path, params).await
+    }
+
+    /// Update an existing HA group.
+    ///
+    /// Proxmox endpoint: `PUT /cluster/ha/groups/{group}` with query params.
+    pub async fn update_ha_group(
+        &self,
+        group: &str,
+        nodes: Option<&str>,
+        comment: Option<&str>,
+        nofailback: bool,
+        restricted: bool,
+    ) -> AppResult<String> {
+        let path = format!("cluster/ha/groups/{group}");
+        let mut params = vec![
+            (
+                "nofailback".to_string(),
+                if nofailback { "1" } else { "0" }.to_string(),
+            ),
+            (
+                "restricted".to_string(),
+                if restricted { "1" } else { "0" }.to_string(),
+            ),
+        ];
+        if let Some(n) = nodes {
+            params.push(("nodes".to_string(), n.to_string()));
+        }
+        if let Some(c) = comment {
+            params.push(("comment".to_string(), c.to_string()));
+        }
+        self.post_with_query(&path, params).await
+    }
+
+    /// Delete an HA group.
+    ///
+    /// Proxmox endpoint: `DELETE /cluster/ha/groups/{group}`
+    /// Proxmox uses DELETE with a query param `?force=1` by default.
+    pub async fn delete_ha_group(&self, group: &str) -> AppResult<String> {
+        let path = format!("cluster/ha/groups/{group}");
+        let params = vec![("force".to_string(), "1".to_string())];
+        self.post_with_query(&path, params).await
+    }
 }
 
 #[cfg(test)]
@@ -1197,6 +1306,8 @@ mod vm_action_integration_tests {
             clusters: vec![],
             auth: AuthConfig::default(),
             tracing: crate::observability::tracing::TracingConfig::default(),
+            data_dir: "/var/lib/moxui".to_string(),
+            webhook: crate::config::WebhookConfig::default(),
         };
         let priv_pem = include_bytes!("../../tests/fixtures/test_jwt_priv.pem");
         let pub_pem = include_bytes!("../../tests/fixtures/test_jwt_pub.pem");
@@ -1211,6 +1322,8 @@ mod vm_action_integration_tests {
             None,
             None,
             None,
+            None,
+            Arc::new(crate::dashboard_custom::DashboardCustomService::new_in_memory()),
         );
         (server, state, audit)
     }
@@ -1653,6 +1766,8 @@ mod vm_action_integration_tests {
                 ..AuthConfig::default()
             },
             tracing: crate::observability::tracing::TracingConfig::default(),
+            data_dir: "/var/lib/moxui".to_string(),
+            webhook: crate::config::WebhookConfig::default(),
         };
         let priv_pem = include_bytes!("../../tests/fixtures/test_jwt_priv.pem");
         let pub_pem = include_bytes!("../../tests/fixtures/test_jwt_pub.pem");
@@ -1684,7 +1799,7 @@ mod vm_action_integration_tests {
             u
         };
         let users = crate::auth::UserStore::with_users(vec![admin, operator, viewer, disabled]);
-        let state = AppState::new(cfg, vec![], audit.clone(), jwt, users, None, None, None, None);
+        let state = AppState::new(cfg, vec![], audit.clone(), jwt, users, None, None, None, None, None, Arc::new(crate::dashboard_custom::DashboardCustomService::new_in_memory()));
         (state, audit)
     }
 
@@ -2212,6 +2327,8 @@ mod vm_action_integration_tests {
             clusters: vec![],
             auth: AuthConfig::default(),
             tracing: crate::observability::tracing::TracingConfig::default(),
+            data_dir: "/var/lib/moxui".to_string(),
+            webhook: crate::config::WebhookConfig::default(),
         };
         let priv_pem = include_bytes!("../../tests/fixtures/test_jwt_priv.pem");
         let pub_pem = include_bytes!("../../tests/fixtures/test_jwt_pub.pem");
@@ -2235,6 +2352,8 @@ mod vm_action_integration_tests {
             None,
             None,
             None,
+            None,
+            Arc::new(crate::dashboard_custom::DashboardCustomService::new_in_memory()),
         );
         let app = crate::api::router(state);
 

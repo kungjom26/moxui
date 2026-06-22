@@ -187,9 +187,11 @@ mod tests {
             clusters: vec![],
             auth: AuthConfig::default(),
             tracing: crate::observability::tracing::TracingConfig::default(),
+            data_dir: "/var/lib/moxui".to_string(),
+            webhook: crate::config::WebhookConfig::default(),
         };
 
-        AppState::new(cfg, vec![], audit, jwt, UserStore::new(), None, None, None, None)
+        AppState::new(cfg, vec![], audit, jwt, UserStore::new(), None, None, None, None, None, Arc::new(crate::dashboard_custom::DashboardCustomService::new_in_memory()))
     }
 
     fn seed_entries(store: &AuditStore, count: usize) {

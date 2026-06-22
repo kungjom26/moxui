@@ -48,6 +48,7 @@ where
     Router::new()
         .route("/", get(serve_index))
         .route("/static/*path", get(serve_static))
+        .route("/locales/*path", get(serve_locales))
         .fallback(serve_index)
 }
 
@@ -69,6 +70,17 @@ async fn serve_static(Path(path): Path<String>) -> impl IntoResponse {
     }
     let mime = mime_guess::from_path(&path).first_or_octet_stream();
     serve_named(&asset_name, mime.as_ref(), true)
+}
+
+/// Serve locale files (JSON translation files).
+///
+/// e.g. `/locales/en.json` → `ui/locales/en.json`
+async fn serve_locales(Path(path): Path<String>) -> impl IntoResponse {
+    let asset_name = format!("locales/{path}");
+    if Asset::get(&asset_name).is_none() {
+        return not_found();
+    }
+    serve_named(&asset_name, "application/json; charset=utf-8", false)
 }
 
 fn serve_named(name: &str, content_type: &str, cacheable: bool) -> Response<Body> {
@@ -123,7 +135,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let ct = resp.headers().get(header::CONTENT_TYPE).unwrap();
         assert!(ct.to_str().unwrap().starts_with("text/html"));
-        let body = to_bytes(resp.into_body(), 32 * 1024).await.unwrap();
+        let body = to_bytes(resp.into_body(), 128 * 1024).await.unwrap();
         let s = std::str::from_utf8(&body).unwrap();
         assert!(s.contains("moxui"));
         assert!(s.contains("x-data=\"moxui()\"")); // Alpine root component

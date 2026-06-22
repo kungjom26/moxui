@@ -208,6 +208,14 @@ async fn main() -> ExitCode {
     let metrics = MetricsService::new();
     tracing::info!("Prometheus metrics initialized");
 
+    // Initialize webhook notification service (optional)
+    let webhook = moxui::webhook::WebhookService::from_config(&config.webhook);
+
+    // Initialize custom dashboard service
+    let dashboard_custom = match moxui::dashboard_custom::DashboardCustomService::new(&config.data_dir).await {
+        svc => std::sync::Arc::new(svc),
+    };
+
     // Create application state
     let state = AppState::new(
         config.clone(),
@@ -219,6 +227,8 @@ async fn main() -> ExitCode {
         webauthn_state,
         oidc_service,
         Some(metrics.clone()),
+        webhook.clone(),
+        dashboard_custom,
     );
 
     // Build router — API + UI are merged inside `api::router` so the

@@ -3,6 +3,7 @@
 pub mod audit;
 pub mod auth;
 pub mod dashboard;
+pub mod hagroups;
 pub mod health;
 pub mod lxcs;
 pub mod networks;
@@ -66,11 +67,19 @@ pub fn router(state: AppState) -> Router {
     let protected = Router::new()
         .route("/api/v1/auth/me", get(auth::me))
         .route("/api/v1/dashboard", get(dashboard::dashboard))
+        .route("/api/v1/dashboard/custom", get(dashboard::get_custom_dashboard).post(dashboard::save_custom_dashboard))
+        .route("/api/v1/dashboard/custom/widget-types", get(dashboard::get_available_widget_types))
         .route("/api/v1/audit", get(audit::list_audit))
         .route("/api/v1/vms", get(vms::list_vms))
+        .route("/api/v1/vms/bulk/start", post(vms::bulk_start))
+        .route("/api/v1/vms/bulk/stop", post(vms::bulk_stop))
+        .route("/api/v1/vms/bulk/reboot", post(vms::bulk_reboot))
+        .route("/api/v1/vms/bulk/delete", post(vms::bulk_delete))
         .route("/api/v1/lxcs", get(lxcs::list_lxcs))
         .route("/api/v1/storages", get(storages::list_storages))
         .route("/api/v1/networks", get(networks::list_networks))
+        .route("/api/v1/hagroups", get(hagroups::list_ha_groups))
+        .route("/api/v1/hagroups/:cluster/:group", post(hagroups::create_ha_group).delete(hagroups::delete_ha_group))
         .route("/api/v1/auth/2fa/setup", post(auth::two_factor_setup))
         .route("/api/v1/auth/2fa/verify", post(auth::two_factor_verify))
         .route("/api/v1/auth/2fa/disable", post(auth::two_factor_disable))
@@ -94,6 +103,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v1/vms/:cluster/:node/:vmid/:action",
             post(vms::vm_action_handler),
+        )
+        .route(
+            "/api/v1/vms/:cluster/:node/:vmid/migrate",
+            post(vms::migrate_vm_handler),
         )
         .route("/api/v1/lxcs/:cluster/:node/:vmid", get(lxcs::lxc_detail))
         .route(

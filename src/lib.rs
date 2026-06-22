@@ -20,6 +20,7 @@ pub mod audit;
 pub mod auth;
 pub mod cache;
 pub mod config;
+pub mod dashboard_custom;
 pub mod db;
 pub mod error;
 pub mod observability;
@@ -29,6 +30,7 @@ pub mod state;
 pub mod telemetry;
 pub mod tls;
 pub mod ui;
+pub mod webhook;
 
 /// Current `MoxUI` version (semver).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

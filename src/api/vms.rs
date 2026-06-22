@@ -309,6 +309,267 @@ async fn vm_delete(
     }))
 }
 
+/// Request body for `POST /api/v1/vms/:cluster/:node/:vmid/migrate`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MigrateRequest {
+    /// Target node to migrate the VM to.
+    pub target: String,
+    /// Whether to perform a live migration (online). Default `true`.
+    #[serde(default = "default_online")]
+    pub online: bool,
+}
+
+fn default_online() -> bool {
+    true
+}
+
+/// `POST /api/v1/vms/:cluster/:node/:vmid/migrate` — migrate a VM to another node.
+///
+/// Requires `Operator` role or higher.
+pub async fn migrate_vm_handler(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Path((cluster, node, vmid)): Path<(String, String, u32)>,
+    Json(body): Json<MigrateRequest>,
+) -> AppResult<Json<VmActionResponse>> {
+    if let Err(resp) = require_role(&auth, Role::Operator) {
+        let status = resp.status();
+        let err = if status == axum::http::StatusCode::FORBIDDEN {
+            AppError::Forbidden("operator role required".into())
+        } else {
+            AppError::Internal(format!("auth middleware returned {status}"))
+        };
+        return Err(err);
+    }
+
+    let client = state
+        .client(&cluster)
+        .ok_or_else(|| AppError::NotFound(format!("cluster '{cluster}' not configured")))?;
+
+    let upid = client.migrate_vm(&node, vmid, &body.target, body.online).await?;
+
+    Ok(Json(VmActionResponse {
+        vmid,
+        action: "migrate".to_string(),
+        upid,
+    }))
+}
+
+// ── Bulk VM Operations ──────────────────────────────────────────────────
+
+/// Reference to a single VM in a bulk action request.
+#[derive(Debug, Clone, Deserialize)]
+pub struct BulkVmRef {
+    /// Cluster the VM belongs to.
+    pub cluster: String,
+    /// Node hosting the VM.
+    pub node: String,
+    /// VMID.
+    pub vmid: u32,
+}
+
+/// Request body for bulk VM actions.
+#[derive(Debug, Clone, Deserialize)]
+pub struct BulkActionRequest {
+    /// List of VMs to act on.
+    pub vms: Vec<BulkVmRef>,
+}
+
+/// One row in a bulk action response.
+#[derive(Debug, Clone, Serialize)]
+pub struct BulkResultRow {
+    /// Cluster the VM belongs to.
+    pub cluster: String,
+    /// Node hosting the VM.
+    pub node: String,
+    /// VMID.
+    pub vmid: u32,
+    /// Action that was applied.
+    pub action: String,
+    /// Status (`ok` or `error`).
+    pub status: String,
+    /// UPID or error message.
+    pub message: String,
+}
+
+/// Response from a bulk action.
+#[derive(Debug, Clone, Serialize)]
+pub struct BulkActionResponse {
+    /// Individual results per VM.
+    pub results: Vec<BulkResultRow>,
+}
+
+/// Execute an action against a list of VMs concurrently using `join_all`.
+async fn bulk_action(
+    state: &AppState,
+    action: &str,
+    vms: Vec<BulkVmRef>,
+) -> Json<BulkActionResponse> {
+    use futures_util::future::join_all;
+
+    let futs = vms.into_iter().map(|vm| {
+        let cluster = vm.cluster.clone();
+        let node = vm.node.clone();
+        let action_str = action.to_string();
+        async move {
+            let client = match state.client(&cluster) {
+                Some(c) => c,
+                None => {
+                    let err = format!("cluster '{cluster}' not configured");
+                    return BulkResultRow {
+                        cluster,
+                        node: node.clone(),
+                        vmid: vm.vmid,
+                        action: action_str,
+                        status: "error".to_string(),
+                        message: err,
+                    };
+                }
+            };
+
+            let path = format!("nodes/{node}/qemu/{}/status/{action_str}", vm.vmid);
+            match client.post::<String>(&path).await {
+                Ok(upid) => BulkResultRow {
+                    cluster,
+                    node,
+                    vmid: vm.vmid,
+                    action: action_str,
+                    status: "ok".to_string(),
+                    message: upid,
+                },
+                Err(e) => BulkResultRow {
+                    cluster,
+                    node,
+                    vmid: vm.vmid,
+                    action: action_str,
+                    status: "error".to_string(),
+                    message: e.to_string(),
+                },
+            }
+        }
+    });
+
+    let results = join_all(futs).await;
+    Json(BulkActionResponse { results })
+}
+
+/// `POST /api/v1/vms/bulk/start` — start multiple VMs concurrently.
+pub async fn bulk_start(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Json(body): Json<BulkActionRequest>,
+) -> AppResult<Json<BulkActionResponse>> {
+    if let Err(resp) = require_role(&auth, Role::Operator) {
+        let status = resp.status();
+        let err = if status == axum::http::StatusCode::FORBIDDEN {
+            AppError::Forbidden("operator role required".into())
+        } else {
+            AppError::Internal(format!("auth middleware returned {status}"))
+        };
+        return Err(err);
+    }
+    Ok(bulk_action(&state, "start", body.vms).await)
+}
+
+/// `POST /api/v1/vms/bulk/stop` — stop multiple VMs concurrently.
+pub async fn bulk_stop(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Json(body): Json<BulkActionRequest>,
+) -> AppResult<Json<BulkActionResponse>> {
+    if let Err(resp) = require_role(&auth, Role::Operator) {
+        let status = resp.status();
+        let err = if status == axum::http::StatusCode::FORBIDDEN {
+            AppError::Forbidden("operator role required".into())
+        } else {
+            AppError::Internal(format!("auth middleware returned {status}"))
+        };
+        return Err(err);
+    }
+    Ok(bulk_action(&state, "stop", body.vms).await)
+}
+
+/// `POST /api/v1/vms/bulk/reboot` — reboot multiple VMs concurrently.
+pub async fn bulk_reboot(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Json(body): Json<BulkActionRequest>,
+) -> AppResult<Json<BulkActionResponse>> {
+    if let Err(resp) = require_role(&auth, Role::Operator) {
+        let status = resp.status();
+        let err = if status == axum::http::StatusCode::FORBIDDEN {
+            AppError::Forbidden("operator role required".into())
+        } else {
+            AppError::Internal(format!("auth middleware returned {status}"))
+        };
+        return Err(err);
+    }
+    Ok(bulk_action(&state, "reboot", body.vms).await)
+}
+
+/// `POST /api/v1/vms/bulk/delete` — delete multiple VMs concurrently.
+pub async fn bulk_delete(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Json(body): Json<BulkActionRequest>,
+) -> AppResult<Json<BulkActionResponse>> {
+    if let Err(resp) = require_role(&auth, Role::Operator) {
+        let status = resp.status();
+        let err = if status == axum::http::StatusCode::FORBIDDEN {
+            AppError::Forbidden("operator role required".into())
+        } else {
+            AppError::Internal(format!("auth middleware returned {status}"))
+        };
+        return Err(err);
+    }
+    // For bulk delete, we reuse the delete_vm client method per VM.
+    use futures_util::future::join_all;
+
+    let futs = body.vms.into_iter().map(|vm| {
+        let cluster = vm.cluster.clone();
+        let node = vm.node.clone();
+        let state = state.clone();
+        async move {
+            let client = match state.client(&cluster) {
+                Some(c) => c,
+                None => {
+                    let err = format!("cluster '{cluster}' not configured");
+                    return BulkResultRow {
+                        cluster,
+                        node: node.clone(),
+                        vmid: vm.vmid,
+                        action: "delete".to_string(),
+                        status: "error".to_string(),
+                        message: err,
+                    };
+                }
+            };
+
+            match client.delete_vm(&node, vm.vmid, false, false, false).await {
+                Ok(upid) => BulkResultRow {
+                    cluster,
+                    node,
+                    vmid: vm.vmid,
+                    action: "delete".to_string(),
+                    status: "ok".to_string(),
+                    message: upid,
+                },
+                Err(e) => BulkResultRow {
+                    cluster,
+                    node,
+                    vmid: vm.vmid,
+                    action: "delete".to_string(),
+                    status: "error".to_string(),
+                    message: e.to_string(),
+                },
+            }
+        }
+    });
+
+    let results = join_all(futs).await;
+    Ok(Json(BulkActionResponse { results }))
+}
+
 #[cfg(test)]
 mod list_vms_contract_tests {
     //! Contract tests for `GET /api/v1/vms`.
@@ -339,6 +600,7 @@ mod list_vms_contract_tests {
     };
     use crate::proxmox::ProxmoxClient;
     use crate::state::AppState;
+    use std::sync::Arc;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -444,6 +706,8 @@ mod list_vms_contract_tests {
             clusters: vec![],
             auth: AuthConfig::default(),
             tracing: crate::observability::tracing::TracingConfig::default(),
+            data_dir: "/tmp/moxui-test".to_string(),
+            webhook: crate::config::WebhookConfig::default(),
         };
         let priv_pem = include_bytes!("../../tests/fixtures/test_jwt_priv.pem");
         let pub_pem = include_bytes!("../../tests/fixtures/test_jwt_pub.pem");
@@ -458,6 +722,8 @@ mod list_vms_contract_tests {
             None,
             None,
             None,
+            None,
+            Arc::new(crate::dashboard_custom::DashboardCustomService::new_in_memory()),
         );
         let app = crate::api::router(state);
         (server, app)
@@ -601,6 +867,7 @@ mod vm_config_contract_tests {
     };
     use crate::proxmox::ProxmoxClient;
     use crate::state::AppState;
+    use std::sync::Arc;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -695,6 +962,8 @@ mod vm_config_contract_tests {
             clusters: vec![],
             auth: AuthConfig::default(),
             tracing: crate::observability::tracing::TracingConfig::default(),
+            data_dir: "/tmp/moxui-test".to_string(),
+            webhook: crate::config::WebhookConfig::default(),
         };
         let priv_pem = include_bytes!("../../tests/fixtures/test_jwt_priv.pem");
         let pub_pem = include_bytes!("../../tests/fixtures/test_jwt_pub.pem");
@@ -709,6 +978,8 @@ mod vm_config_contract_tests {
             None,
             None,
             None,
+            None,
+            Arc::new(crate::dashboard_custom::DashboardCustomService::new_in_memory()),
         );
         let app = crate::api::router(state);
         (server, app)

@@ -16,6 +16,55 @@ const VM_RETRY_DELAYS = [2000, 4000, 8000, 15000, 30000]; // exponential backoff
 
 function moxui() {
     return {
+        // --- i18n / locale ---
+        locale: localStorage.getItem('moxui.locale') || 'en',
+        translations: {},            // loaded locale key->value map
+        localeLoading: false,
+        localeError: null,
+
+        // $t() magic method for Alpine.js templates
+        $t(key) {
+            if (this.translations && this.translations[key]) {
+                return this.translations[key];
+            }
+            // Fallback: English
+            if (window.__moxuiFallback && window.__moxuiFallback[key]) {
+                return window.__moxuiFallback[key];
+            }
+            return key;  // show the key as fallback
+        },
+
+        async loadLocale(lang) {
+            this.locale = lang;
+            localStorage.setItem('moxui.locale', lang);
+            this.localeLoading = true;
+            try {
+                const resp = await fetch(`/locales/${lang}.json`);
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                this.translations = await resp.json();
+                // Also load fallback English if not already loaded
+                if (lang !== 'en' && !window.__moxuiFallback) {
+                    const engResp = await fetch('/locales/en.json');
+                    if (engResp.ok) {
+                        window.__moxuiFallback = await engResp.json();
+                    }
+                }
+                document.documentElement.lang = lang === 'th' ? 'th' : 'en';
+                this.localeError = null;
+            } catch (e) {
+                this.localeError = e.message || String(e);
+                // Fall back to English inline
+                this.translations = {};
+            } finally {
+                this.localeLoading = false;
+            }
+        },
+
+        async setLocale(lang) {
+            await this.loadLocale(lang);
+            // Re-render UI elements that depend on locale
+            // Alpine will auto-rebind $t() calls
+        },
         // --- auth ---
         token: localStorage.getItem('moxui.token') || null,
         user: null,
@@ -81,6 +130,38 @@ function moxui() {
         vmSort: { key: 'vmid', dir: 'asc' },  // dir: 'asc' | 'desc'
         vmPollHandle: null,        // setInterval id for active polling
 
+        // --- HA Groups state (Phase 4) ---
+        haGroups: null,            // HaGroupRow[] from /api/v1/hagroups
+        haGroupsError: null,
+        showHaGroupForm: false,
+        editingHaGroup: null,      // HaGroupRow being edited, or null for new
+        haGroupForm: { group: '', cluster: '', nodes: '', comment: '', nofailback: false, restricted: false },
+        haGroupSaving: false,
+        haGroupFormError: null,
+
+        // --- Bulk operations state (Phase 4) ---
+        selectedVmIds: new Set(),  // Set of "cluster:vmid" strings
+        bulkBusy: false,
+        bulkProgress: '',
+        bulkResults: null,         // { action, results: [{ cluster, node, vmid, upid, error }] }
+
+        // --- Migration state (Phase 4) ---
+        showMigrateModal: false,
+        migrateForm: { target: '', online: true },
+        migrateBusy: false,
+        migrateError: null,
+        availableNodes: [],        // cached node list for the current cluster
+
+        // --- Custom Dashboard state (Phase 4) ---
+        customDashboard: null,     // CustomDashboardConfig from /api/v1/dashboard/custom
+        customDashboardError: null,
+        customDashboardLoading: false,
+        widgetTypes: [],           // available widget types from the server
+        editingWidget: null,       // WidgetConfig being edited in the inline editor
+        showWidgetEditor: false,
+        dashboardSaving: false,
+        dashboardSaved: false,
+
         // ----- lifecycle -----
 
         async init() {
@@ -88,6 +169,20 @@ function moxui() {
             // `theme` but we also set <html> directly so the CSS variables
             // resolve before the first paint).
             document.documentElement.classList.toggle('dark', this.theme === 'dark');
+
+            // Load locale — auto-detect browser language, fall back to stored preference
+            const browserLang = navigator.language?.startsWith('th') ? 'th' : 'en';
+            const storedLocale = localStorage.getItem('moxui.locale');
+            const initialLocale = storedLocale || browserLang;
+            // Load English fallback immediately
+            try {
+                const engResp = await fetch('/locales/en.json');
+                if (engResp.ok) {
+                    window.__moxuiFallback = await engResp.json();
+                }
+            } catch (_) {}
+            // Then load the user's preferred locale
+            await this.loadLocale(initialLocale);
 
             if (this.token) {
                 try {
@@ -120,7 +215,7 @@ function moxui() {
             document.addEventListener('keydown', (e) => {
                 if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
                 if (prefix && !e.metaKey && !e.ctrlKey && !e.altKey) {
-                    const map = { v: 'vms', l: 'lxcs', s: 'storages', n: 'networks', a: 'audit', d: 'vms' };
+                    const map = { v: 'vms', l: 'lxcs', s: 'storages', n: 'networks', h: 'hagroups', a: 'audit', d: 'dashboard' };
                     if (map[e.key]) { location.hash = '#/' + map[e.key]; prefix = null; return; }
                 }
                 if (e.key === 'g') { prefix = 'g'; setTimeout(() => { prefix = null; }, 800); }
@@ -171,6 +266,17 @@ function moxui() {
                     this.stopVmPolling();
                     this.stopVmDetailPolling();
                     this.fetchNetworks();
+                    break;
+                case 'hagroups':
+                    this.stopVmPolling();
+                    this.stopVmDetailPolling();
+                    this.fetchHaGroups();
+                    break;
+                case 'dashboard':
+                    this.stopVmPolling();
+                    this.stopVmDetailPolling();
+                    this.fetchCustomDashboard();
+                    this.fetchWidgetTypes();
                     break;
                 case 'audit':
                     this.stopVmPolling();
@@ -712,6 +818,295 @@ function moxui() {
         canShutdown() { return this.selectedVm && (this.selectedVm.status === 'running' || this.selectedVm.status === 'paused'); },
         canReboot()   { return this.selectedVm && this.selectedVm.status === 'running'; },
         canDelete()   { return this.selectedVm != null; },
+        canMigrate()  { return this.selectedVm && this.selectedVm.status === 'running'; },
+
+        // ----- HA Group management (Phase 4) -----
+
+        async fetchHaGroups() {
+            try {
+                const resp = await this.api('/api/v1/hagroups');
+                const body = await resp.json();
+                this.haGroups = body.groups || [];
+                if (body.errors && Object.keys(body.errors).length > 0) {
+                    this.haGroupsError = 'Some clusters failed: ' +
+                        Object.entries(body.errors).map(([k, v]) => `${k}: ${v}`).join('; ');
+                } else {
+                    this.haGroupsError = null;
+                }
+            } catch (e) {
+                this.haGroupsError = e.message || String(e);
+            }
+        },
+
+        editHaGroup(g) {
+            this.editingHaGroup = g;
+            this.haGroupForm = {
+                group: g.group,
+                cluster: g.cluster,
+                nodes: g.nodes || '',
+                comment: g.comment || '',
+                nofailback: g.nofailback == 1,
+                restricted: g.restricted == 1,
+            };
+            this.showHaGroupForm = true;
+            this.haGroupFormError = null;
+        },
+
+        cancelHaGroupForm() {
+            this.showHaGroupForm = false;
+            this.editingHaGroup = null;
+            this.haGroupForm = { group: '', cluster: '', nodes: '', comment: '', nofailback: false, restricted: false };
+            this.haGroupFormError = null;
+        },
+
+        async saveHaGroup() {
+            this.haGroupSaving = true;
+            this.haGroupFormError = null;
+            const { group, cluster, nodes, comment, nofailback, restricted } = this.haGroupForm;
+            try {
+                const body = { nodes: nodes || undefined, comment: comment || undefined, nofailback, restricted };
+                await this.api(`/api/v1/hagroups/${cluster}/${group}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+                this.cancelHaGroupForm();
+                await this.fetchHaGroups();
+            } catch (e) {
+                this.haGroupFormError = e.message || String(e);
+            } finally {
+                this.haGroupSaving = false;
+            }
+        },
+
+        async deleteHaGroup(g) {
+            if (!confirm(`Delete HA group "${g.group}" on cluster "${g.cluster}"?`)) return;
+            try {
+                await this.api(`/api/v1/hagroups/${g.cluster}/${g.group}`, { method: 'DELETE' });
+                await this.fetchHaGroups();
+            } catch (e) {
+                this.haGroupsError = e.message || String(e);
+            }
+        },
+
+        // ----- Bulk operations (Phase 4) -----
+
+        toggleVmSelection(vm) {
+            const key = vm.cluster + ':' + vm.vmid;
+            if (this.selectedVmIds.has(key)) {
+                this.selectedVmIds.delete(key);
+            } else {
+                this.selectedVmIds.add(key);
+            }
+            // Force reactivity: Alpine needs a fresh reference for Sets.
+            this.selectedVmIds = new Set(this.selectedVmIds);
+        },
+
+        toggleSelectAll() {
+            const filtered = this.filteredVms;
+            if (this.allVmsSelected) {
+                // Deselect all visible.
+                for (const vm of filtered) {
+                    this.selectedVmIds.delete(vm.cluster + ':' + vm.vmid);
+                }
+            } else {
+                // Select all visible.
+                for (const vm of filtered) {
+                    this.selectedVmIds.add(vm.cluster + ':' + vm.vmid);
+                }
+            }
+            this.selectedVmIds = new Set(this.selectedVmIds);
+        },
+
+        get allVmsSelected() {
+            const filtered = this.filteredVms;
+            if (!filtered || filtered.length === 0) return false;
+            return filtered.every(vm => this.selectedVmIds.has(vm.cluster + ':' + vm.vmid));
+        },
+
+        clearVmSelection() {
+            this.selectedVmIds = new Set();
+            this.bulkResults = null;
+        },
+
+        async bulkAction(action) {
+            this.bulkBusy = true;
+            this.bulkResults = null;
+            this.bulkProgress = '';
+            // Build list of VM refs from selected IDs.
+            const vms = [];
+            for (const key of this.selectedVmIds) {
+                const [cluster, vmidStr] = key.split(':');
+                const vmid = Number(vmidStr);
+                const vm = (this.vms || []).find(v => v.cluster === cluster && v.vmid === vmid);
+                if (vm) {
+                    vms.push({ cluster, node: vm.node, vmid });
+                }
+            }
+            this.bulkProgress = `Sending ${action} for ${vms.length} VM(s)...`;
+            try {
+                const resp = await this.api(`/api/v1/vms/bulk/${action}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ vms }),
+                });
+                this.bulkResults = await resp.json();
+                // Clear selection after successful bulk action.
+                this.selectedVmIds = new Set();
+                // Refresh VM list to reflect status changes.
+                this.fetchVms();
+            } catch (e) {
+                this.bulkResults = { action, results: [{ error: e.message || String(e) }] };
+            } finally {
+                this.bulkBusy = false;
+                this.bulkProgress = '';
+                // Auto-hide results after 10 seconds.
+                if (this.bulkResults) {
+                    setTimeout(() => { this.bulkResults = null; }, 10000);
+                }
+            }
+        },
+
+        // ----- Live Migration (Phase 4) -----
+
+        async loadNodes() {
+            // Build a deduplicated list of nodes from the current cluster's VMs.
+            const cluster = this.selectedVm?.cluster;
+            if (!cluster || !this.vms) return;
+            const nodes = new Set();
+            for (const vm of this.vms) {
+                if (vm.cluster === cluster && vm.node !== this.selectedVm?.node) {
+                    nodes.add(vm.node);
+                }
+            }
+            this.availableNodes = [...nodes].sort();
+        },
+
+        async confirmMigrate() {
+            if (!this.migrateForm.target) return;
+            this.migrateBusy = true;
+            this.migrateError = null;
+            const { cluster, node, vmid } = this.selectedVm;
+            const { target, online } = this.migrateForm;
+            try {
+                const resp = await this.api(`/api/v1/vms/${cluster}/${node}/${vmid}/migrate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ target, online }),
+                });
+                const data = await resp.json();
+                this.showMigrateModal = false;
+                if (data.upid) {
+                    this.vmActionPending = { upid: data.upid, action: 'migrate', startedAt: Date.now() };
+                    this.fetchVmDetail();
+                    this.fetchVmTask();
+                }
+            } catch (e) {
+                this.migrateError = e.message || String(e);
+            } finally {
+                this.migrateBusy = false;
+            }
+        },
+
+        // ----- Custom Dashboard (Phase 4) -----
+
+        async fetchCustomDashboard() {
+            this.customDashboardLoading = true;
+            this.customDashboardError = null;
+            try {
+                const resp = await this.api('/api/v1/dashboard/custom');
+                this.customDashboard = await resp.json();
+            } catch (e) {
+                this.customDashboardError = e.message || String(e);
+            } finally {
+                this.customDashboardLoading = false;
+            }
+        },
+
+        async fetchWidgetTypes() {
+            try {
+                const resp = await this.api('/api/v1/dashboard/custom/widget-types');
+                this.widgetTypes = await resp.json();
+            } catch (e) {
+                console.warn('Failed to load widget types:', e);
+            }
+        },
+
+        addWidget(type) {
+            if (!this.customDashboard || !this.widgetTypes) return;
+            const template = this.widgetTypes.find(t => t.type === type);
+            if (!template) return;
+            const id = 'widget-' + Date.now();
+            const maxY = this.customDashboard.widgets.reduce((max, w) => Math.max(max, w.y + w.height), 1);
+            const widget = {
+                id,
+                type: template.type,
+                title: template.label,
+                x: 1,
+                y: maxY,
+                width: template.default_width || 6,
+                height: template.default_height || 2,
+            };
+            this.customDashboard.widgets.push(widget);
+            this.customDashboard.layout.push({
+                row: maxY,
+                widgets: [id],
+            });
+            this.saveCustomDashboard();
+        },
+
+        removeWidget(id) {
+            if (!this.customDashboard) return;
+            this.customDashboard.widgets = this.customDashboard.widgets.filter(w => w.id !== id);
+            this.customDashboard.layout = this.customDashboard.layout.filter(r =>
+                r.widgets = r.widgets.filter(w => w !== id)
+            ).filter(r => r.widgets.length > 0);
+            if (this.editingWidget && this.editingWidget.id === id) {
+                this.editingWidget = null;
+                this.showWidgetEditor = false;
+            }
+            this.saveCustomDashboard();
+        },
+
+        editWidget(widget) {
+            this.editingWidget = { ...widget };
+            this.showWidgetEditor = true;
+        },
+
+        saveWidgetEdit() {
+            if (!this.editingWidget || !this.customDashboard) return;
+            const idx = this.customDashboard.widgets.findIndex(w => w.id === this.editingWidget.id);
+            if (idx >= 0) {
+                this.customDashboard.widgets[idx] = { ...this.editingWidget };
+            }
+            this.editingWidget = null;
+            this.showWidgetEditor = false;
+            this.saveCustomDashboard();
+        },
+
+        cancelWidgetEdit() {
+            this.editingWidget = null;
+            this.showWidgetEditor = false;
+        },
+
+        async saveCustomDashboard() {
+            if (!this.customDashboard) return;
+            this.dashboardSaving = true;
+            this.dashboardSaved = false;
+            try {
+                await this.api('/api/v1/dashboard/custom', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ dashboard: this.customDashboard }),
+                });
+                this.dashboardSaved = true;
+                setTimeout(() => { this.dashboardSaved = false; }, 3000);
+            } catch (e) {
+                this.customDashboardError = e.message || String(e);
+            } finally {
+                this.dashboardSaving = false;
+            }
+        },
 
         // ----- UI helpers -----
 

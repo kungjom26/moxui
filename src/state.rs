@@ -14,8 +14,10 @@ use crate::auth::oidc::OidcService;
 use crate::auth::webauthn::WebauthnState;
 use crate::auth::{JwtService, PreAuthStore, RefreshStore, User, UserStore};
 use crate::config::Config;
+use crate::dashboard_custom::DashboardCustomService;
 use crate::observability::metrics::MetricsService;
 use crate::proxmox::ProxmoxClient;
+use crate::webhook::WebhookService;
 
 /// Default cache TTL for Proxmox readiness probes.
 pub const READINESS_CACHE_TTL: Duration = Duration::from_secs(10);
@@ -95,6 +97,10 @@ pub struct AppState {
     pub vnc_limiters: Arc<Mutex<HashMap<String, Arc<crate::api::vnc::VncConnectionLimiter>>>>,
     /// Prometheus metrics service (optional — `None` when metrics are unavailable).
     pub metrics: Option<MetricsService>,
+    /// Webhook notification dispatch service (optional).
+    pub webhook: Option<Arc<WebhookService>>,
+    /// Custom per-user dashboard service.
+    pub dashboard_custom: Arc<DashboardCustomService>,
 }
 
 impl AppState {
@@ -113,6 +119,8 @@ impl AppState {
         webauthn_state: Option<WebauthnState>,
         oidc_service: Option<OidcService>,
         metrics: Option<MetricsService>,
+        webhook: Option<Arc<WebhookService>>,
+        dashboard_custom: Arc<DashboardCustomService>,
     ) -> Self {
         Self {
             config: Arc::new(config),
@@ -129,6 +137,8 @@ impl AppState {
             oidc_users: Arc::new(Mutex::new(HashMap::new())),
             vnc_limiters: Arc::new(Mutex::new(HashMap::new())),
             metrics,
+            webhook,
+            dashboard_custom,
         }
     }
 
@@ -252,6 +262,8 @@ mod tests {
             clusters: vec![],
             auth: crate::config::AuthConfig::default(),
             tracing: crate::observability::tracing::TracingConfig::default(),
+            webhook: crate::config::WebhookConfig::default(),
+            data_dir: "/tmp/moxui-test".to_string(),
         }
     }
 
@@ -265,6 +277,7 @@ mod tests {
     #[tokio::test]
     async fn test_state_creation_empty() {
         let audit = std::sync::Arc::new(crate::audit::AuditStore::open_in_memory().unwrap());
+        let dash_svc = std::sync::Arc::new(crate::dashboard_custom::DashboardCustomService::new("/tmp/moxui-test").await);
         let state = AppState::new(
             test_config(),
             vec![],
@@ -275,6 +288,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            dash_svc,
         );
         assert_eq!(state.config.server.bind, "0.0.0.0:8080");
         assert_eq!(state.clients.len(), 0);
@@ -306,6 +321,7 @@ mod tests {
         let c1 = ProxmoxClient::new(cluster1).await.unwrap();
         let c2 = ProxmoxClient::new(cluster2).await.unwrap();
         let audit = std::sync::Arc::new(crate::audit::AuditStore::open_in_memory().unwrap());
+        let dash_svc = std::sync::Arc::new(crate::dashboard_custom::DashboardCustomService::new("/tmp/moxui-test").await);
         let state = AppState::new(
             cfg,
             vec![c1, c2],
@@ -316,6 +332,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            dash_svc,
         );
 
         assert_eq!(state.clients.len(), 2);
@@ -328,6 +346,7 @@ mod tests {
     #[tokio::test]
     async fn test_readiness_with_no_clusters_is_ready() {
         let audit = std::sync::Arc::new(crate::audit::AuditStore::open_in_memory().unwrap());
+        let dash_svc = std::sync::Arc::new(crate::dashboard_custom::DashboardCustomService::new("/tmp/moxui-test").await);
         let state = AppState::new(
             test_config(),
             vec![],
@@ -338,6 +357,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            dash_svc,
         );
         let snap = state.readiness().await;
         assert!(snap.all_healthy(), "empty cluster list should be ready");

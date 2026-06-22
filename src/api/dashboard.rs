@@ -10,9 +10,10 @@
 //! Restricted users see only their explicitly allowed clusters.
 
 use axum::{extract::State, Json};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::auth::AuthContext;
+use crate::config::CustomDashboardConfig;
 use crate::error::AppResult;
 use crate::proxmox::types::{StorageResource, Version, VmResource};
 use crate::state::AppState;
@@ -261,4 +262,59 @@ async fn collect_cluster_dashboard(
         allocated_memory,
         error: None,
     })
+}
+
+// ── Custom Dashboard ──────────────────────────────────────────────────
+
+/// Request body for saving a custom dashboard.
+#[derive(Debug, Deserialize)]
+pub struct SaveCustomDashboardRequest {
+    /// Full dashboard config.
+    pub dashboard: CustomDashboardConfig,
+}
+
+/// `GET /api/v1/dashboard/custom` — get the calling user's custom dashboard.
+pub async fn get_custom_dashboard(
+    State(state): State<AppState>,
+    auth: AuthContext,
+) -> Json<CustomDashboardConfig> {
+    let user_id = &auth.claims.username;
+    let config = state.dashboard_custom.get_dashboard(user_id).await;
+    Json(config)
+}
+
+/// `POST /api/v1/dashboard/custom` — save the calling user's custom dashboard.
+pub async fn save_custom_dashboard(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Json(body): Json<SaveCustomDashboardRequest>,
+) -> Json<serde_json::Value> {
+    let user_id = &auth.claims.username;
+    match state
+        .dashboard_custom
+        .save_dashboard(user_id, body.dashboard)
+        .await
+    {
+        Ok(()) => Json(serde_json::json!({ "status": "saved" })),
+        Err(e) => Json(serde_json::json!({ "error": e })),
+    }
+}
+
+/// `GET /api/v1/dashboard/custom/widget-types` — list available widget types.
+pub async fn get_available_widget_types(
+) -> Json<Vec<serde_json::Value>> {
+    let types = crate::dashboard_custom::DashboardCustomService::available_widget_types();
+    let result: Vec<serde_json::Value> = types
+        .iter()
+        .map(|t| {
+            serde_json::json!({
+                "type": t.widget_type,
+                "label": t.label,
+                "description": t.description,
+                "default_width": t.default_width,
+                "default_height": t.default_height,
+            })
+        })
+        .collect();
+    Json(result)
 }

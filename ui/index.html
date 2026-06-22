@@ -42,20 +42,28 @@
         <header class="topbar">
             <span class="brand">📦 moxui</span>
             <nav>
-                <a href="#/vms" :class="{ active: route === 'vms' }">VMs</a>
-                <a href="#/lxcs" :class="{ active: route === 'lxcs' }">LXC</a>
-                <a href="#/storages" :class="{ active: route === 'storages' }">Storage</a>
-                <a href="#/networks" :class="{ active: route === 'networks' }">Network</a>
-                <a href="#/audit" :class="{ active: route === 'audit' }">Audit</a>
+                <a href="#/vms" :class="{ active: route === 'vms' }"><span x-text="$t('nav.vms')"></span></a>
+                <a href="#/lxcs" :class="{ active: route === 'lxcs' }"><span x-text="$t('nav.lxc')"></span></a>
+                <a href="#/storages" :class="{ active: route === 'storages' }"><span x-text="$t('nav.storage')"></span></a>
+                <a href="#/networks" :class="{ active: route === 'networks' }"><span x-text="$t('nav.network')"></span></a>
+                <a href="#/hagroups" :class="{ active: route === 'hagroups' }"><span x-text="$t('nav.ha')"></span></a>
+                <a href="#/dashboard" :class="{ active: route === 'dashboard' }"><span x-text="$t('nav.dashboard')"></span></a>
+                <a href="#/audit" :class="{ active: route === 'audit' }"><span x-text="$t('nav.audit')"></span></a>
             </nav>
             <div class="spacer"></div>
-            <button class="icon" @click="toggleTheme()" :title="theme === 'dark' ? 'Switch to light' : 'Switch to dark'">
+            <button class="icon" @click="toggleTheme()" :title="theme === 'dark' ? $t('theme.light') : $t('theme.dark')">
                 <span x-text="theme === 'dark' ? '☀' : '🌙'"></span>
             </button>
             <span class="user" x-text="user?.username + ' (' + user?.role + ')'"></span>
-            <button class="link" @click="registerPasskey()" title="Register a passkey for passwordless login" x-show="!passkeyBusy">🔑 Passkey</button>
-            <button class="link" disabled x-show="passkeyBusy">Registering…</button>
-            <button class="link" @click="logout()">Sign out</button>
+            <span class="locale-switch">
+                <button class="link" @click="setLocale(locale === 'en' ? 'th' : 'en')"
+                        :title="$t('language.switch')">
+                    <span x-text="locale === 'en' ? '🇹🇭' : '🇬🇧'"></span>
+                </button>
+            </span>
+            <button class="link" @click="registerPasskey()" :title="$t('user.register_passkey')" x-show="!passkeyBusy">🔑 <span x-text="$t('user.register_passkey')"></span></button>
+            <button class="link" disabled x-show="passkeyBusy"><span x-text="$t('user.registering')"></span></button>
+            <button class="link" @click="logout()"><span x-text="$t('user.sign_out')"></span></button>
             <p class="error" x-show="passkeySuccess" x-text="passkeySuccess" style="margin: 0; font-size: 0.8rem;"></p>
         </header>
 
@@ -108,6 +116,29 @@
 
             <p class="muted" x-show="vms === null">Loading…</p>
 
+            <!-- Bulk action toolbar (Phase 4). -->
+            <div class="toolbar" x-show="vms && selectedVmIds.size > 0">
+                <span class="muted" x-text="selectedVmIds.size + ' VM(s) selected'"></span>
+                <button @click="bulkAction('start')" :disabled="bulkBusy">▶ Start</button>
+                <button @click="bulkAction('stop')" :disabled="bulkBusy">■ Stop</button>
+                <button @click="bulkAction('reboot')" :disabled="bulkBusy">↻ Reboot</button>
+                <button class="danger" @click="bulkAction('delete')" :disabled="bulkBusy">🗑 Delete</button>
+                <button class="link" @click="clearVmSelection()">Clear selection</button>
+                <span class="muted" x-show="bulkBusy" x-text="bulkProgress"></span>
+            </div>
+
+            <!-- Bulk results inline (show for a few seconds). -->
+            <div x-show="bulkResults" class="card" style="margin: 0.5rem 0; padding: 0.75rem; max-height: 200px; overflow-y: auto;">
+                <strong x-text="'Bulk ' + bulkResults?.action + ' results:'"></strong>
+                <template x-for="r in bulkResults?.results || []" :key="r.cluster + ':' + r.vmid">
+                    <div style="font-size: 0.85rem; margin-top: 0.25rem;">
+                        <span x-text="r.cluster + '/' + r.node + '/' + r.vmid + ':'"></span>
+                        <span x-show="r.error" class="error" x-text="' ✗ ' + r.error"></span>
+                        <span x-show="!r.error" class="ok" x-text="' ✓ ' + (r.upid ? r.upid.substring(0, 30) + '…' : 'done')"></span>
+                    </div>
+                </template>
+            </div>
+
             <!-- Empty state: no VMs at all, or no matches after filtering. -->
             <p class="muted" x-show="vms && vms.length === 0">No VMs reported by any cluster.</p>
             <p class="muted" x-show="vms && vms.length > 0 && sortedVms.length === 0">
@@ -117,6 +148,9 @@
             <table x-show="vms && sortedVms.length > 0" class="grid">
                 <thead>
                     <tr>
+                        <th style="width: 2em;">
+                            <input type="checkbox" @click="toggleSelectAll()" :checked="allVmsSelected" />
+                        </th>
                         <th @click="sortBy('vmid')" class="sortable" :class="{ active: vmSort.key === 'vmid' }">
                             VMID<span x-text="sortIndicator('vmid')"></span>
                         </th>
@@ -147,6 +181,10 @@
                     <template x-for="vm in sortedVms" :key="vm.cluster + ':' + vm.vmid">
                         <tr @click="openVm(vm)" class="clickable"
                             :class="{ stale: vmsAreStale }">
+                            <td @click.stop>
+                                <input type="checkbox" :checked="selectedVmIds.has(vm.cluster + ':' + vm.vmid)"
+                                       @change="toggleVmSelection(vm)" />
+                            </td>
                             <td x-text="vm.vmid"></td>
                             <td x-text="vm.name || '(unnamed)'"></td>
                             <td x-text="vm.cluster"></td>
@@ -215,6 +253,213 @@
                     </template>
                 </tbody>
             </table>
+        </section>
+
+        <!-- HA Groups page (Phase 4). -->
+        <section x-show="route === 'hagroups'">
+            <header class="section-head">
+                <h2>HA Groups <span class="muted" x-text="'(' + (haGroups?.length || 0) + ')'"></span></h2>
+                <div class="meta">
+                    <button class="link" @click="fetchHaGroups()" title="Refresh now">↻</button>
+                </div>
+            </header>
+
+            <p class="error" x-show="haGroupsError" x-text="haGroupsError"></p>
+            <p class="muted" x-show="haGroups === null">Loading…</p>
+            <p class="muted" x-show="haGroups && haGroups.length === 0">No HA groups configured.</p>
+
+            <!-- Create HA Group button (opens inline form). -->
+            <div class="toolbar" x-show="haGroups">
+                <button @click="showHaGroupForm = !showHaGroupForm">
+                    <span x-text="showHaGroupForm ? '− Cancel' : '+ New HA Group'"></span>
+                </button>
+            </div>
+
+            <!-- Create/Edit HA Group form. -->
+            <div class="card" x-show="showHaGroupForm" style="margin: 0.5rem 0; padding: 1rem;">
+                <h3 x-text="editingHaGroup ? 'Edit HA Group' : 'Create HA Group'"></h3>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+                    <label>
+                        <span>Group name</span>
+                        <input x-model="haGroupForm.group" type="text" placeholder="my-ha-group" required />
+                    </label>
+                    <label>
+                        <span>Cluster</span>
+                        <select x-model="haGroupForm.cluster" required>
+                            <option value="">Select cluster…</option>
+                            <template x-for="c in distinctClusters" :key="c">
+                                <option :value="c" x-text="c"></option>
+                            </template>
+                        </select>
+                    </label>
+                    <label>
+                        <span>Nodes (comma-separated)</span>
+                        <input x-model="haGroupForm.nodes" type="text" placeholder="node1,node2" />
+                    </label>
+                    <label>
+                        <span>Comment</span>
+                        <input x-model="haGroupForm.comment" type="text" placeholder="Optional description" />
+                    </label>
+                    <label class="checkbox">
+                        <input x-model="haGroupForm.nofailback" type="checkbox" />
+                        <span>Disable auto-failback</span>
+                    </label>
+                    <label class="checkbox">
+                        <input x-model="haGroupForm.restricted" type="checkbox" />
+                        <span>Restricted</span>
+                    </label>
+                </div>
+                <div class="toolbar" style="margin-top: 0.75rem;">
+                    <button @click="saveHaGroup()" :disabled="!haGroupForm.group || !haGroupForm.cluster || haGroupSaving">
+                        <span x-text="haGroupSaving ? 'Saving…' : 'Save'"></span>
+                    </button>
+                    <button class="link" @click="cancelHaGroupForm()">Cancel</button>
+                    <p class="error" x-show="haGroupFormError" x-text="haGroupFormError" style="margin:0"></p>
+                </div>
+            </div>
+
+            <table x-show="haGroups && haGroups.length > 0" class="grid">
+                <thead>
+                    <tr>
+                        <th>Group</th>
+                        <th>Cluster</th>
+                        <th>Nodes</th>
+                        <th>Type</th>
+                        <th>Nofailback</th>
+                        <th>Restricted</th>
+                        <th>Comment</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="g in haGroups" :key="g.cluster + ':' + g.group">
+                        <tr>
+                            <td x-text="g.group"></td>
+                            <td x-text="g.cluster"></td>
+                            <td x-text="g.nodes || '—'"></td>
+                            <td x-text="g.type || '—'"></td>
+                            <td x-text="g.nofailback == 1 ? 'yes' : 'no'"></td>
+                            <td x-text="g.restricted == 1 ? 'yes' : 'no'"></td>
+                            <td x-text="g.comment || '—'" style="max-width: 20em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></td>
+                            <td>
+                                <button class="link" @click="editHaGroup(g)" title="Edit">✎</button>
+                                <button class="link danger" @click="deleteHaGroup(g)" title="Delete">✕</button>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </section>
+
+        <!-- Custom Dashboard (Phase 4) -->
+        <section x-show="route === 'dashboard'">
+            <header class="section-head">
+                <h2><span x-text="$t('dashboard.custom.title')"></span></h2>
+                <div class="meta">
+                    <span x-show="dashboardSaving" class="muted" x-text="$t('dashboard.saving')"></span>
+                    <span x-show="dashboardSaved" class="ok" x-text="$t('dashboard.layout_saved')"></span>
+                    <button class="link" @click="fetchCustomDashboard(); fetchWidgetTypes();" title="Refresh">↻</button>
+                </div>
+            </header>
+
+            <p class="error" x-show="customDashboardError" x-text="customDashboardError"></p>
+            <p class="muted" x-show="customDashboardLoading"><span x-text="$t('vm.loading')"></span></p>
+
+            <!-- Widget type selector (Add Widget button with dropdown) -->
+            <div class="toolbar" x-show="widgetTypes.length > 0">
+                <select x-ref="widgetTypeSelect">
+                    <option value="" disabled><span x-text="$t('dashboard.add_widget')"></span></option>
+                    <template x-for="wt in widgetTypes" :key="wt.type">
+                        <option :value="wt.type" x-text="wt.label"></option>
+                    </template>
+                </select>
+                <button @click="addWidget($refs.widgetTypeSelect.value); $refs.widgetTypeSelect.value = ''">
+                    <span x-text="$t('dashboard.add_widget')"></span>
+                </button>
+            </div>
+
+            <!-- Dashboard grid (12-column CSS grid) -->
+            <div x-show="customDashboard && customDashboard.widgets && customDashboard.widgets.length > 0"
+                 class="dashboard-grid" style="display: grid; grid-template-columns: repeat(12, 1fr); gap: 0.75rem; margin-top: 1rem;">
+                <template x-for="widget in customDashboard.widgets" :key="widget.id">
+                    <div class="card dashboard-widget"
+                         :style="'grid-column: ' + widget.x + ' / span ' + widget.width + '; grid-row: auto / span ' + widget.height + ';'"
+                         :data-widget-id="widget.id">
+                        <div class="dashboard-widget-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--border);">
+                            <strong x-text="widget.title || widget.type"></strong>
+                            <div class="dashboard-widget-actions" style="display: flex; gap: 0.25rem;">
+                                <button class="link" @click="editWidget(widget)" style="font-size: 0.8rem;" title="Settings">⚙</button>
+                                <button class="link danger" @click="removeWidget(widget.id)" style="font-size: 0.8rem;" title="Remove">✕</button>
+                            </div>
+                        </div>
+                        <div class="dashboard-widget-body" style="font-size: 0.85rem; color: var(--muted);">
+                            <!-- Widget content rendered based on type -->
+                            <div x-show="widget.type === 'vm_list'">
+                                <p class="muted" x-text="$t('dashboard.widget.vm_list')"></p>
+                                <p x-show="vms" x-text="(vms?.length || 0) + ' VMs'"></p>
+                                <p x-show="!vms" class="muted" x-text="$t('vm.loading')"></p>
+                            </div>
+                            <div x-show="widget.type === 'cluster_health'">
+                                <p class="muted" x-text="$t('dashboard.widget.cluster_health')"></p>
+                                <p x-text="'Clusters configured: ' + (distinctClusters?.length || 0)"></p>
+                            </div>
+                            <div x-show="widget.type === 'resource_usage'">
+                                <p class="muted" x-text="$t('dashboard.widget.resource_usage')"></p>
+                                <p x-show="vms">
+                                    <span x-text="'CPU: ' + (sortedVms.reduce((a, v) => a + (v.cpus || 0), 0).toFixed(1) + ' cores')"></span><br/>
+                                    <span x-text="'Memory: ' + humanBytes(sortedVms.reduce((a, v) => a + (v.maxmem || 0), 0))"></span>
+                                </p>
+                            </div>
+                            <div x-show="widget.type === 'recent_audit'">
+                                <p class="muted" x-text="$t('dashboard.widget.recent_audit')"></p>
+                                <p x-show="auditEntries.length > 0" x-text="auditEntries.length + ' entries'"></p>
+                                <p x-show="auditEntries.length === 0" class="muted" x-text="$t('audit.no_entries')"></p>
+                            </div>
+                            <div x-show="widget.type === 'ha_status'">
+                                <p class="muted" x-text="$t('dashboard.widget.ha_status')"></p>
+                                <p x-show="haGroups" x-text="haGroups.length + ' groups'"></p>
+                                <p x-show="!haGroups" class="muted">No HA data</p>
+                            </div>
+                            <div x-show="widget.type === 'ceph_status'">
+                                <p class="muted" x-text="$t('dashboard.widget.ceph_status')"></p>
+                                <p class="muted">Ceph status widget</p>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+            </div>
+
+            <!-- Empty state -->
+            <p class="muted" x-show="customDashboard && (!customDashboard.widgets || customDashboard.widgets.length === 0)"
+               x-text="$t('dashboard.no_widgets')"></p>
+
+            <!-- Widget editor dialog -->
+            <div class="dialog-backdrop" x-show="showWidgetEditor && editingWidget" @click.self="cancelWidgetEdit()">
+                <div class="dialog">
+                    <header>
+                        <h3><span x-text="$t('dashboard.widget_settings')"></span></h3>
+                        <button class="link dialog-x" @click="cancelWidgetEdit()" title="Cancel">×</button>
+                    </header>
+                    <div style="display: grid; gap: 0.75rem; padding: 0.5rem 0;">
+                        <label>
+                            <span x-text="$t('dashboard.widget_title')"></span>
+                            <input x-model="editingWidget.title" type="text" />
+                        </label>
+                        <label>
+                            <span><span x-text="$t('dashboard.widget_size')"></span> (width x height)</span>
+                            <div style="display: flex; gap: 0.5rem;">
+                                <input x-model="editingWidget.width" type="number" min="1" max="12" style="width: 5em;" />
+                                <span>x</span>
+                                <input x-model="editingWidget.height" type="number" min="1" max="6" style="width: 5em;" />
+                            </div>
+                        </label>
+                    </div>
+                    <footer>
+                        <button class="link" @click="cancelWidgetEdit()"><span x-text="$t('dialog.cancel')"></span></button>
+                        <button @click="saveWidgetEdit()"><span x-text="$t('dialog.confirm')"></span></button>
+                    </footer>
+                </div>
+            </div>
         </section>
 
         <!-- Audit log page (Day 17). -->
@@ -332,6 +577,8 @@
                         :class="{ muted: !canStop() }">■ Stop</button>
                 <button @click="requestVmAction('reboot')"  :disabled="!canReboot()"
                         :class="{ muted: !canReboot() }">↻ Reboot</button>
+                <button @click="showMigrateModal = true; loadNodes()" :disabled="!canMigrate()"
+                        :class="{ muted: !canMigrate() }">⇄ Migrate</button>
                 <span class="spacer" style="flex:1"></span>
                 <button class="danger" @click="requestVmAction('delete', { body: { purge: true, force: false, skiplock: false } })"
                         :disabled="!canDelete()">🗑 Delete</button>
@@ -469,6 +716,38 @@
                         <button x-show="!vmConfirm?.danger"
                                 @click="confirmVmAction()">
                             Confirm
+                        </button>
+                    </footer>
+                </div>
+            </div>
+
+            <!-- Migrate VM modal. -->
+            <div class="dialog-backdrop" x-show="showMigrateModal" @click.self="showMigrateModal = false">
+                <div class="dialog">
+                    <header>
+                        <h3>⇄ Migrate VM <span x-text="selectedVm?.vmid"></span></h3>
+                        <button class="link dialog-x" @click="showMigrateModal = false" title="Cancel">×</button>
+                    </header>
+                    <div style="display: grid; gap: 0.75rem; padding: 0.5rem 0;">
+                        <label>
+                            <span>Target Node</span>
+                            <select x-model="migrateForm.target">
+                                <option value="">Select node…</option>
+                                <template x-for="n in availableNodes" :key="n">
+                                    <option :value="n" x-text="n"></option>
+                                </template>
+                            </select>
+                        </label>
+                        <label class="checkbox">
+                            <input x-model="migrateForm.online" type="checkbox" />
+                            <span>Live migration (no downtime)</span>
+                        </label>
+                    </div>
+                    <p class="error" x-show="migrateError" x-text="migrateError"></p>
+                    <footer>
+                        <button class="link" @click="showMigrateModal = false">Cancel</button>
+                        <button @click="confirmMigrate()" :disabled="!migrateForm.target || migrateBusy">
+                            <span x-text="migrateBusy ? 'Migrating…' : 'Migrate'"></span>
                         </button>
                     </footer>
                 </div>

@@ -18,7 +18,7 @@ use figment::{
     Figment,
 };
 use secrecy::{ExposeSecret, SecretString};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 // Note: `Serialize` is NOT derived on `Config` (or `ClusterConfig`) because
 // Proxmox credentials should never be written to disk or transmitted. To
@@ -43,6 +43,16 @@ pub struct Config {
     /// OpenTelemetry tracing configuration.
     #[serde(default)]
     pub tracing: crate::observability::tracing::TracingConfig,
+    /// Webhook notification configuration.
+    #[serde(default)]
+    pub webhook: WebhookConfig,
+    /// Data directory for persistent storage (dashboards, etc.).
+    #[serde(default = "default_data_dir")]
+    pub data_dir: String,
+}
+
+fn default_data_dir() -> String {
+    "/var/lib/moxui".to_string()
 }
 
 /// HTTP server configuration.
@@ -493,6 +503,111 @@ impl Config {
     pub fn cluster_password(cluster: &ClusterConfig) -> &str {
         cluster.password.expose_secret()
     }
+}
+
+/// Webhook notification configuration.
+#[derive(Debug, Clone, Deserialize)]
+pub struct WebhookConfig {
+    /// Whether webhook dispatch is enabled globally.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Default retry count for webhook delivery.
+    #[serde(default = "default_webhook_retry")]
+    pub retry_count: u32,
+    /// Timeout in seconds for webhook HTTP requests.
+    #[serde(default = "default_webhook_timeout")]
+    pub timeout_secs: u64,
+    /// Webhook endpoint configurations.
+    #[serde(default)]
+    pub endpoints: Vec<WebhookEndpointConfig>,
+}
+
+fn default_webhook_retry() -> u32 {
+    3
+}
+
+fn default_webhook_timeout() -> u64 {
+    10
+}
+
+impl Default for WebhookConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            retry_count: 3,
+            timeout_secs: 10,
+            endpoints: vec![],
+        }
+    }
+}
+
+/// Configuration for a single webhook endpoint.
+#[derive(Debug, Clone, Deserialize)]
+pub struct WebhookEndpointConfig {
+    /// Human-readable name for the endpoint (e.g. "Slack #ops").
+    pub name: String,
+    /// URL to send the webhook POST to.
+    pub url: String,
+    /// Event types this endpoint subscribes to (e.g. `["VmStarted", "VmStopped"]`).
+    /// Empty list subscribes to all events.
+    #[serde(default)]
+    pub events: Vec<String>,
+    /// Optional HMAC secret for signing payloads (HMAC-SHA256).
+    #[serde(default)]
+    pub secret: Option<String>,
+    /// Maximum retries for this endpoint (overrides global default).
+    #[serde(default)]
+    pub max_retries: Option<u32>,
+}
+
+/// Custom dashboard configuration per user.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CustomDashboardConfig {
+    /// User ID this config belongs to.
+    pub user_id: String,
+    /// Widget configurations.
+    #[serde(default)]
+    pub widgets: Vec<WidgetConfig>,
+    /// Layout rows defining the grid.
+    #[serde(default)]
+    pub layout: Vec<LayoutRow>,
+}
+
+/// Configuration for a single dashboard widget.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WidgetConfig {
+    /// Unique widget ID (e.g. "widget-1").
+    pub id: String,
+    /// Widget type.
+    #[serde(rename = "type")]
+    pub widget_type: String,
+    /// Widget title (optional override).
+    #[serde(default)]
+    pub title: Option<String>,
+    /// Grid position (column start, 1-indexed, 1-12).
+    pub x: u32,
+    /// Grid position (row start).
+    pub y: u32,
+    /// Widget width in grid columns (1-12).
+    pub width: u32,
+    /// Widget height in grid rows.
+    pub height: u32,
+}
+
+/// A layout row in the custom dashboard grid.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LayoutRow {
+    /// Row index (1-based).
+    pub row: u32,
+    /// Widget IDs in this row, in order.
+    pub widgets: Vec<String>,
+}
+
+/// All custom dashboard configs, keyed by user ID, serialized as JSON file.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AllDashboardConfigs {
+    /// Map of user_id -> dashboard config.
+    pub dashboards: std::collections::HashMap<String, CustomDashboardConfig>,
 }
 
 #[cfg(test)]
