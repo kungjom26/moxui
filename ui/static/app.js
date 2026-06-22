@@ -37,6 +37,19 @@ function moxui() {
         lxcs: null,
         storages: null,
         networks: null,
+        auditEntries: [],
+        auditTotal: 0,
+        auditPage: 1,
+        auditPerPage: 50,
+        auditPages: 0,
+        auditLoading: false,
+        auditError: null,
+        auditFilter: {
+            method: '',
+            path: '',
+            status: '',
+            request_id: '',
+        },
         selectedVm: null,
 
         // --- VM detail page state ---
@@ -103,7 +116,7 @@ function moxui() {
             document.addEventListener('keydown', (e) => {
                 if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
                 if (prefix && !e.metaKey && !e.ctrlKey && !e.altKey) {
-                    const map = { v: 'vms', l: 'lxcs', s: 'storages', n: 'networks', d: 'vms' };
+                    const map = { v: 'vms', l: 'lxcs', s: 'storages', n: 'networks', a: 'audit', d: 'vms' };
                     if (map[e.key]) { location.hash = '#/' + map[e.key]; prefix = null; return; }
                 }
                 if (e.key === 'g') { prefix = 'g'; setTimeout(() => { prefix = null; }, 800); }
@@ -154,6 +167,11 @@ function moxui() {
                     this.stopVmPolling();
                     this.stopVmDetailPolling();
                     this.fetchNetworks();
+                    break;
+                case 'audit':
+                    this.stopVmPolling();
+                    this.stopVmDetailPolling();
+                    this.fetchAudit();
                     break;
                 case 'vm-detail': {
                     this.stopVmPolling();
@@ -225,6 +243,10 @@ function moxui() {
             this.user = null;
             localStorage.removeItem('moxui.token');
             this.vms = this.lxcs = this.storages = this.networks = null;
+            this.auditEntries = [];
+            this.auditTotal = 0;
+            this.auditPages = 0;
+            this.auditError = null;
             this.vmsError = null;
             this.vmsLastUpdated = null;
             this.stopVmPolling();
@@ -252,6 +274,46 @@ function moxui() {
         async fetchLxcs()     { this.lxcs     = (await (await this.api('/api/v1/lxcs'    )).json()).lxcs; },
         async fetchStorages() { this.storages = (await (await this.api('/api/v1/storages')).json()).storages; },
         async fetchNetworks() { this.networks = (await (await this.api('/api/v1/networks')).json()).networks; },
+
+        // ----- Audit log -----
+
+        async fetchAudit() {
+            this.auditLoading = true;
+            this.auditError = null;
+            try {
+                const params = new URLSearchParams();
+                params.set('page', this.auditPage);
+                params.set('per_page', this.auditPerPage);
+                if (this.auditFilter.method) params.set('method', this.auditFilter.method);
+                if (this.auditFilter.path) params.set('path', this.auditFilter.path);
+                if (this.auditFilter.status) params.set('status', this.auditFilter.status);
+                if (this.auditFilter.request_id) params.set('request_id', this.auditFilter.request_id);
+
+                const resp = await this.api('/api/v1/audit?' + params.toString());
+                const body = await resp.json();
+                this.auditEntries = body.entries || [];
+                this.auditTotal = body.total || 0;
+                this.auditPage = body.page || 1;
+                this.auditPerPage = body.per_page || 50;
+                this.auditPages = body.pages || 0;
+            } catch (e) {
+                this.auditError = e.message || String(e);
+                this.auditEntries = [];
+            } finally {
+                this.auditLoading = false;
+            }
+        },
+
+        auditGoToPage(page) {
+            this.auditPage = page;
+            this.fetchAudit();
+        },
+
+        clearAuditFilters() {
+            this.auditFilter = { method: '', path: '', status: '', request_id: '' };
+            this.auditPage = 1;
+            this.fetchAudit();
+        },
 
         // ----- VM list polling + fetch -----
 

@@ -39,6 +39,7 @@
                 <a href="#/lxcs" :class="{ active: route === 'lxcs' }">LXC</a>
                 <a href="#/storages" :class="{ active: route === 'storages' }">Storage</a>
                 <a href="#/networks" :class="{ active: route === 'networks' }">Network</a>
+                <a href="#/audit" :class="{ active: route === 'audit' }">Audit</a>
             </nav>
             <div class="spacer"></div>
             <button class="icon" @click="toggleTheme()" :title="theme === 'dark' ? 'Switch to light' : 'Switch to dark'">
@@ -204,6 +205,90 @@
                     </template>
                 </tbody>
             </table>
+        </section>
+
+        <!-- Audit log page (Day 17). -->
+        <section x-show="route === 'audit'">
+            <header class="section-head">
+                <h2>Audit Log <span class="muted" x-text="'(' + (auditTotal || 0) + ' total)'"></span></h2>
+                <div class="meta">
+                    <button class="link" @click="fetchAudit()" title="Refresh now">↻</button>
+                </div>
+            </header>
+
+            <!-- Filter toolbar. -->
+            <div class="toolbar">
+                <input type="search" x-model="auditFilter.method" placeholder="🔍 Filter method (GET, POST...)"
+                       class="search" @input.debounce="fetchAudit" />
+                <input type="search" x-model="auditFilter.path" placeholder="Path contains..."
+                       class="search" @input.debounce="fetchAudit" />
+                <input type="search" x-model="auditFilter.request_id" placeholder="Request ID..."
+                       class="search" @input.debounce="fetchAudit" />
+                <select x-model="auditFilter.status" @change="fetchAudit()" title="Filter by status code">
+                    <option value="">All statuses</option>
+                    <option value="200">200</option>
+                    <option value="201">201</option>
+                    <option value="204">204</option>
+                    <option value="400">400</option>
+                    <option value="401">401</option>
+                    <option value="403">403</option>
+                    <option value="404">404</option>
+                    <option value="500">500</option>
+                </select>
+                <button class="link" @click="clearAuditFilters()"
+                        x-show="auditFilter.method || auditFilter.path || auditFilter.status || auditFilter.request_id">
+                    Clear filters
+                </button>
+            </div>
+
+            <p class="muted" x-show="auditLoading">Loading…</p>
+            <p class="muted" x-show="!auditLoading && auditEntries.length === 0">No audit entries match the current filters.</p>
+            <p class="error" x-show="auditError" x-text="auditError"></p>
+
+            <table x-show="!auditLoading && auditEntries.length > 0" class="grid">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Timestamp</th>
+                        <th>Method</th>
+                        <th>Path</th>
+                        <th>Status</th>
+                        <th>Duration</th>
+                        <th>Request ID</th>
+                        <th>Remote</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="e in auditEntries" :key="e.id">
+                        <tr>
+                            <td class="num" x-text="e.id"></td>
+                            <td x-text="new Date(e.ts * 1000).toLocaleString()"></td>
+                            <td>
+                                <span class="badge" :class="'badge-' + (e.status < 300 ? 'running' : e.status < 400 ? 'paused' : 'stopped')"
+                                      x-text="e.method"></span>
+                            </td>
+                            <td x-text="e.path" style="max-width: 30em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></td>
+                            <td>
+                                <span class="badge" :class="'badge-' + (e.status < 300 ? 'running' : e.status < 400 ? 'paused' : 'stopped')"
+                                      x-text="e.status"></span>
+                            </td>
+                            <td class="num" x-text="e.duration_ms + 'ms'"></td>
+                            <td style="font-family: monospace; font-size: 0.75rem; max-width: 10em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" x-text="e.request_id"></td>
+                            <td x-text="e.remote_addr || '—'"></td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+
+            <!-- Pagination. -->
+            <div class="toolbar" x-show="auditPages > 1">
+                <button class="link" @click="auditGoToPage(1)" :disabled="auditPage <= 1">« First</button>
+                <button class="link" @click="auditGoToPage(auditPage - 1)" :disabled="auditPage <= 1">‹ Prev</button>
+                <span class="muted" x-text="'Page ' + auditPage + ' of ' + auditPages"></span>
+                <button class="link" @click="auditGoToPage(auditPage + 1)" :disabled="auditPage >= auditPages">Next ›</button>
+                <button class="link" @click="auditGoToPage(auditPages)" :disabled="auditPage >= auditPages">Last »</button>
+                <span class="muted" x-text="'(' + auditPerPage + ' per page)'"></span>
+            </div>
         </section>
 
         <!-- VM detail (Day 12 — tabs + actions + confirm dialog). -->

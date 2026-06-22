@@ -1,5 +1,6 @@
 //! HTTP API layer (axum handlers).
 
+pub mod audit;
 pub mod auth;
 pub mod health;
 pub mod lxcs;
@@ -48,6 +49,7 @@ pub fn router(state: AppState) -> Router {
     // Authenticated routes — require a valid Bearer token.
     let protected = Router::new()
         .route("/api/v1/auth/me", get(auth::me))
+        .route("/api/v1/audit", get(audit::list_audit))
         .route("/api/v1/vms", get(vms::list_vms))
         .route("/api/v1/vms/:cluster/:vmid", get(vms::vm_detail))
         .route(

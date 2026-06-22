@@ -20,4 +20,7 @@ pub mod middleware;
 pub mod store;
 
 pub use middleware::audit_middleware;
-pub use store::{AuditEntry, AuditStore, AuditStoreError};
+pub use store::{
+    AuditEntry, AuditEntryRow, AuditQuery, AuditQueryResult, AuditStore, AuditStoreError,
+    SortDir,
+};
