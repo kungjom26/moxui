@@ -104,7 +104,7 @@ pub async fn dashboard(
     let username = &auth.claims.username;
 
     // Get all clients the user is allowed to access.
-    let allowed_clients = state.clients_for_user(username);
+    let allowed_clients = state.clients_for_user(username).await;
 
     let futs = allowed_clients.into_iter().map(|c| {
         let name = c.name().to_string();

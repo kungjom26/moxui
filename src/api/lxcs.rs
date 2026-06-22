@@ -1,8 +1,11 @@
-//! LXC container list + detail endpoint handlers.
+//! LXC container list + detail + write endpoint handlers.
 //!
 //! Read-only views over `/cluster/resources?type=vm` filtered to `type=lxc`.
+//! Write endpoints (start/stop/shutdown/reboot/delete) translate user-facing
+//! actions into Proxmox API calls and report the resulting UPID.
+//!
 //! All handlers are gated behind `require_auth` (Viewer+) at the router
-//! level — no write actions are exposed in Phase 0.
+//! level. Write endpoints additionally check for `Operator+` role.
 
 use std::collections::HashMap;
 
@@ -12,6 +15,7 @@ use axum::{
 };
 use serde::Serialize;
 
+use crate::auth::{require_role, AuthContext, Role};
 use crate::error::{AppError, AppResult};
 use crate::proxmox::types::{LxcStatus, VmResource};
 use crate::state::AppState;
@@ -119,4 +123,92 @@ pub async fn lxc_detail(
         .ok_or_else(|| AppError::NotFound(format!("LXC {vmid} not found in {cluster}/{node}")))?;
 
     Ok(Json(status))
+}
+
+// ── Batch 1: LXC Write Operations ──────────────────────────────────────────
+
+/// `POST /api/v1/lxcs/:cluster/:node/:vmid/:action` — perform an action on an LXC container.
+///
+/// Supported actions: `start`, `stop`, `shutdown`, `reboot`.
+/// Requires `Operator` role or higher.
+pub async fn lxc_action_handler(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Path((cluster, node, vmid, action)): Path<(String, String, u32, String)>,
+    body: Option<Json<crate::proxmox::types::LxcActionRequest>>,
+) -> AppResult<Json<serde_json::Value>> {
+    if let Err(resp) = require_role(&auth, Role::Operator) {
+        let status = resp.status();
+        let err = if status == axum::http::StatusCode::FORBIDDEN {
+            AppError::Forbidden("operator role required".into())
+        } else {
+            AppError::Internal(format!("auth middleware returned {status}"))
+        };
+        return Err(err);
+    }
+
+    match action.as_str() {
+        "start" | "stop" | "shutdown" | "reboot" => {
+            let client = state
+                .client(&cluster)
+                .ok_or_else(|| AppError::NotFound(format!("cluster '{cluster}' not configured")))?;
+
+            let opts = body.map(|Json(b)| b).unwrap_or_default();
+            let mut params: Vec<(String, String)> = Vec::new();
+            if let Some(f) = opts.force {
+                params.push(("force".to_string(), if f { "1" } else { "0" }.to_string()));
+            }
+            if let Some(t) = opts.timeout {
+                params.push(("timeout".to_string(), t.to_string()));
+            }
+
+            let upid = client.lxc_action(&node, vmid, &action, params).await?;
+
+            Ok(Json(serde_json::json!({
+                "vmid": vmid,
+                "action": action,
+                "upid": upid,
+                "cluster": cluster,
+            })))
+        }
+        other => Err(AppError::BadRequest(format!(
+            "unknown lxc action '{other}'; expected start|stop|shutdown|reboot"
+        ))),
+    }
+}
+
+/// `POST /api/v1/lxcs/:cluster/:node/:vmid/delete` — delete an LXC container.
+///
+/// Requires `Operator` role or higher.
+pub async fn lxc_delete_handler(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Path((cluster, node, vmid)): Path<(String, String, u32)>,
+    body: Option<Json<crate::proxmox::types::DeleteLxcRequest>>,
+) -> AppResult<Json<serde_json::Value>> {
+    if let Err(resp) = require_role(&auth, Role::Operator) {
+        let status = resp.status();
+        let err = if status == axum::http::StatusCode::FORBIDDEN {
+            AppError::Forbidden("operator role required".into())
+        } else {
+            AppError::Internal(format!("auth middleware returned {status}"))
+        };
+        return Err(err);
+    }
+
+    let client = state
+        .client(&cluster)
+        .ok_or_else(|| AppError::NotFound(format!("cluster '{cluster}' not configured")))?;
+
+    let opts = body.map(|Json(b)| b).unwrap_or_default();
+    let upid = client
+        .lxc_delete(&node, vmid, opts.purge, opts.force, opts.skiplock)
+        .await?;
+
+    Ok(Json(serde_json::json!({
+        "vmid": vmid,
+        "action": "delete",
+        "upid": upid,
+        "cluster": cluster,
+    })))
 }

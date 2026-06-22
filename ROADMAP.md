@@ -20,6 +20,7 @@ Week 4  │ 🎉 MVP — usable on homelab cluster
 Week 5  │ Phase 3 — Production hardening (tests + metrics + OIDC)
 Week 6  │ Phase 4 — Polish (live migration, HA, bulk, webhooks, custom dashboards, i18n)
 Week 7+ │ Phase 5 — Power User (replication, plugins, Terraform, migration wizard)
+Week 8+ │ Phase 6 — Advanced Cluster Management (VM/LXC write ops, LDAP, Ceph, SDN, VNC proxy, global search, PWA)
 ```
 
 ---
@@ -123,24 +124,39 @@ Week 7+ │ Phase 5 — Power User (replication, plugins, Terraform, migration w
 
 ---
 
-## 📦 Phase 6+ — Future
+## 📦 Phase 6 — Advanced Cluster Management ✅
 
-**Goal:** Iterative improvement based on feedback
+**Goal:** Full write operations, enterprise auth, and rich frontend UX
 
-### Planned Features
-- VM/LXC creation and configuration editing
-- Storage content upload and management
-- VM snapshots, templates, backup configuration
-- Full VNC WebSocket proxy
-- LDAP/AD authentication
-- User management UI
-- Ceph dashboard
-- SDN management (Zones, VNets, Subnets)
-- Cross-cluster live migration
-- Cloud deployment (AWS, GCP, Azure)
-- AI-powered recommendations (right-sizing, anomaly detection)
-- Mobile app (Tauri or React Native)
-- Multi-tenancy (organizations, billing)
+### Key Deliverables
+- ✅ **VM Creation, Clone, Config Editor** — Full VM lifecycle management
+- ✅ **VM Snapshots** — List, create, delete, rollback snapshots
+- ✅ **VM Backup** — Trigger vzdump backup + list backups
+- ✅ **Disk Resize** — Resize VM disks (cloudinit + scsi/virtio)
+- ✅ **LXC Write Ops** — Start/stop/shutdown/reboot/delete LXC
+- ✅ **Storage Upload + Delete** — Upload ISO/templates, delete content
+- ✅ **LDAP/AD Authentication** — Bind + search + auto-create flow
+- ✅ **User Management CRUD** — Admin API for users
+- ✅ **Full VNC WebSocket Proxy** — Bidirectional WS pipe via tokio-tungstenite
+- ✅ **Ceph Dashboard** — Cluster status + pool overview
+- ✅ **Cluster Firewall Rules** — Read-only proxy
+- ✅ **SDN Management** — Zone + VNet listing
+- ✅ **VLAN Listing** — Per-bridge VLAN aggregation
+- ✅ **HA Status Dashboard** — HA resource status
+- ✅ **Global Search (Cmd+K)** — Cross-resource search overlay
+- ✅ **Keyboard Shortcuts** — 10+ shortcuts for navigation
+- ✅ **VM Creation Wizard UI** — 4-step wizard in frontend
+- ✅ **PWA Support** — manifest.json + service worker
+- ✅ **Notification Center** — Bell icon, polling, unread count
+- ✅ **Stats Export (CSV)** — Download chart data
+- ✅ **API Keys Management UI** — Create/revoke/list API keys
+- ✅ 170 tests, all passing
+
+---
+
+## 📦 Phase 7+ — Future (v3.0)
+
+**Goal:** Multi-region, multi-tenancy, cloud, and AI features
 
 ---
 
@@ -154,7 +170,7 @@ Week 7+ │ Phase 5 — Power User (replication, plugins, Terraform, migration w
 | End Week 5 | Phase 3 — Production hardening | ✅ Complete |
 | End Week 6 | Phase 4 — Polish & Community | ✅ Complete |
 | Week 7+ | Phase 5 — Power User Features | ✅ Complete |
-| Q3 2026 | v2.0 — Advanced Cluster Mgmt | 🔜 Planning |
+| Week 8+ | Phase 6 — Advanced Cluster Management | ✅ Complete |\n|| v3.0 | Q4 2027 | Multi-region, multi-tenancy, cloud, AI | 🔜 Planning |
 
 ---
 

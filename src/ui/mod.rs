@@ -154,7 +154,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        let body = to_bytes(resp.into_body(), 64 * 1024).await.unwrap();
+        let body = to_bytes(resp.into_body(), 192 * 1024).await.unwrap();
         let s = std::str::from_utf8(&body).unwrap();
         assert!(s.contains("function moxui()"));
     }

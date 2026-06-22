@@ -285,6 +285,64 @@ impl UserStore {
     pub fn user_allowed_clusters_owned(&self, username: &str) -> Option<Vec<String>> {
         self.allowed_clusters.get(username).cloned()
     }
+
+    /// Add a user to the store. Returns an error if the username already exists.
+    pub fn add_user(&mut self, user: User) -> Result<(), String> {
+        if self.users.contains_key(&user.username) {
+            return Err(format!("user '{}' already exists", user.username));
+        }
+        self.users.insert(user.username.clone(), user);
+        Ok(())
+    }
+
+    /// Update an existing user's fields. `None` fields are left unchanged.
+    pub fn update_user(
+        &mut self,
+        username: &str,
+        display_name: Option<&str>,
+        email: Option<&str>,
+        role: Option<&str>,
+        password_hash: Option<&str>,
+        enabled: Option<bool>,
+    ) -> Result<(), String> {
+        let user = self
+            .users
+            .get_mut(username)
+            .ok_or_else(|| format!("user '{username}' not found"))?;
+        if let Some(dn) = display_name {
+            user.display_name = dn.to_string();
+        }
+        if let Some(e) = email {
+            user.email = Some(e.to_string());
+        }
+        if let Some(r) = role {
+            let new_role: Role = r
+                .parse()
+                .map_err(|_| format!("unknown role '{r}' (expected admin|operator|viewer)"))?;
+            user.role = new_role;
+        }
+        if let Some(ph) = password_hash {
+            user.password_hash = secrecy::SecretString::new(ph.to_string().into_boxed_str());
+        }
+        if let Some(en) = enabled {
+            user.enabled = en;
+        }
+        Ok(())
+    }
+
+    /// Delete a user by username. Returns an error if not found.
+    pub fn delete_user(&mut self, username: &str) -> Result<(), String> {
+        if self.users.remove(username).is_none() {
+            return Err(format!("user '{username}' not found"));
+        }
+        self.allowed_clusters.remove(username);
+        Ok(())
+    }
+
+    /// Iterate over all users.
+    pub fn list_users(&self) -> impl Iterator<Item = &User> {
+        self.users.values()
+    }
 }
 
 #[cfg(test)]

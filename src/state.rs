@@ -70,8 +70,9 @@ pub struct AppState {
     pub audit: Arc<AuditStore>,
     /// JWT encoder/decoder (shared, `Clone`-cheap).
     pub jwt: Arc<JwtService>,
-    /// In-memory user store. Cheap to clone (`Arc` inside).
-    pub users: Arc<UserStore>,
+    /// In-memory user store (wrapped in RwLock for concurrent read + write).
+    /// Cheap to clone (`Arc` inside).
+    pub users: Arc<tokio::sync::RwLock<UserStore>>,
     /// Thread-safe refresh token store.
     pub refresh_store: Arc<RefreshStore>,
     /// Pre-auth (2FA pending) session store.
@@ -131,7 +132,7 @@ impl AppState {
             readiness: Arc::new(RwLock::new(HashMap::new())),
             audit,
             jwt: Arc::new(jwt),
-            users: Arc::new(users),
+            users: Arc::new(tokio::sync::RwLock::new(users)),
             refresh_store: Arc::new(RefreshStore::new()),
             preauth: Arc::new(PreAuthStore::new()),
             webauthn: webauthn_state.map(Arc::new),
@@ -167,8 +168,11 @@ impl AppState {
     ///
     /// Admins (or users with no cluster restrictions) see all clusters.
     /// Restricted users see only their allowed clusters.
-    pub fn clients_for_user(&self, username: &str) -> Vec<&ProxmoxClient> {
-        let allowed = self.users.user_allowed_clusters_owned(username);
+    pub async fn clients_for_user(&self, username: &str) -> Vec<&ProxmoxClient> {
+        let allowed = {
+            let store = self.users.read().await;
+            store.user_allowed_clusters_owned(username)
+        };
         match allowed {
             None => self.clients.iter().collect(),
             Some(clusters) => self
@@ -183,8 +187,9 @@ impl AppState {
     ///
     /// Delegates to [`UserStore::user_can_access_cluster`].
     #[must_use]
-    pub fn user_can_access_cluster(&self, username: &str, cluster: &str) -> bool {
-        self.users.user_can_access_cluster(username, cluster)
+    pub async fn user_can_access_cluster(&self, username: &str, cluster: &str) -> bool {
+        let store = self.users.read().await;
+        store.user_can_access_cluster(username, cluster)
     }
 
     /// Return a freshness-guarded readiness snapshot for all clusters.

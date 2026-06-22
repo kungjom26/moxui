@@ -145,3 +145,52 @@ pub async fn node_networks(
     let networks = client.list_networks(&node).await?;
     Ok(Json(networks))
 }
+
+/// `GET /api/v1/networks/vlans` — list VLANs aggregated across all clusters.
+///
+/// Gathers all network interfaces and filters for VLAN-type interfaces,
+/// returning them grouped by cluster.
+pub async fn list_vlans(State(state): State<AppState>) -> Json<serde_json::Value> {
+    use futures_util::future::join_all;
+
+    // First, gather all networks via the cluster-level endpoint.
+    let futs = state.clients().map(|c| {
+        let name = c.name().to_string();
+        async move {
+            let result: Result<Vec<NodeNetwork>, _> = c.get("network").await;
+            (name, result)
+        }
+    });
+
+    let results = join_all(futs).await;
+
+    let mut vlans = Vec::new();
+    let mut errors = HashMap::new();
+    for (cluster_name, result) in results {
+        match result {
+            Ok(list) => {
+                for net in list {
+                    if net.kind == "vlan" {
+                        vlans.push(serde_json::json!({
+                            "cluster": cluster_name,
+                            "iface": net.iface,
+                            "vlan_id": net.vlan_id,
+                            "raw_device": net.iface_vlan_raw_device,
+                            "active": net.active,
+                            "address": net.address,
+                            "comments": net.comments,
+                        }));
+                    }
+                }
+            }
+            Err(e) => {
+                errors.insert(cluster_name, e.to_string());
+            }
+        }
+    }
+
+    Json(serde_json::json!({
+        "vlans": vlans,
+        "errors": errors,
+    }))
+}

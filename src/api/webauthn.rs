@@ -138,7 +138,8 @@ pub async fn login_start(
     })?;
 
     // Look up the user by username to get their id.
-    let user = state.users.get(&req.username).ok_or_else(|| {
+    let users = state.users.read().await;
+    let user = users.get(&req.username).ok_or_else(|| {
         (
             StatusCode::NOT_FOUND,
             format!("User '{}' not found", req.username),
@@ -178,7 +179,8 @@ pub async fn login_complete(
     })?;
 
     // Look up the user by username.
-    let user = state.users.get(&req.username).ok_or_else(|| {
+    let users = state.users.read().await;
+    let user = users.get(&req.username).ok_or_else(|| {
         (
             StatusCode::NOT_FOUND,
             format!("User '{}' not found", req.username),

@@ -1,8 +1,10 @@
-//! Storage list + content endpoint handlers.
+//! Storage list + content + write endpoint handlers.
 //!
 //! Read-only views over `/nodes/{node}/storage` and
-//! `/nodes/{node}/storage/{storage}/content`. All handlers are gated behind
-//! `require_auth` (Viewer+) at the router level.
+//! `/nodes/{node}/storage/{storage}/content`. Write endpoints cover
+//! upload and delete operations. All handlers are gated behind
+//! `require_auth` (Viewer+) at the router level. Write endpoints
+//! additionally check for `Operator+` role.
 
 use std::collections::HashMap;
 
@@ -12,6 +14,7 @@ use axum::{
 };
 use serde::Serialize;
 
+use crate::auth::{require_role, AuthContext, Role};
 use crate::error::{AppError, AppResult};
 use crate::proxmox::types::{StorageContent, StorageResource};
 use crate::state::AppState;
@@ -130,4 +133,102 @@ pub async fn storage_content(
 
     let content = client.storage_content(&node, &storage).await?;
     Ok(Json(content))
+}
+
+// ── Batch 1: Storage Write Operations ───────────────────────────────────────
+
+/// `POST /api/v1/storages/:cluster/:node/:storage/upload` — upload a file to a storage pool.
+///
+/// Accepts a JSON body with `content` (content type) and `data` (base64-encoded file bytes)
+/// and `filename` (the original filename). The handler decodes the base64 data and
+/// forwards it as a multipart upload to Proxmox.
+///
+/// Requires `Operator` role or higher.
+pub async fn storage_upload_handler(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Path((cluster, node, storage)): Path<(String, String, String)>,
+    Json(body): Json<serde_json::Value>,
+) -> AppResult<Json<serde_json::Value>> {
+    if let Err(resp) = require_role(&auth, Role::Operator) {
+        let status = resp.status();
+        let err = if status == axum::http::StatusCode::FORBIDDEN {
+            AppError::Forbidden("operator role required".into())
+        } else {
+            AppError::Internal(format!("auth middleware returned {status}"))
+        };
+        return Err(err);
+    }
+
+    let client = state
+        .client(&cluster)
+        .ok_or_else(|| AppError::NotFound(format!("cluster '{cluster}' not configured")))?;
+
+    // Extract fields from JSON body
+    let content_type = body
+        .get("content")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::BadRequest("missing 'content' field (iso|vztmpl|snippets)".into()))?
+        .to_string();
+
+    let filename = body
+        .get("filename")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::BadRequest("missing 'filename' field".into()))?
+        .to_string();
+
+    let data_b64 = body
+        .get("data")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::BadRequest("missing 'data' field (base64-encoded file)".into()))?;
+
+    // Decode base64 data
+    use base64::Engine;
+    let data = base64::engine::general_purpose::STANDARD
+        .decode(data_b64)
+        .map_err(|e| AppError::BadRequest(format!("invalid base64 data: {e}")))?;
+
+    let resp = client
+        .upload_file(&node, &storage, &content_type, &filename, data)
+        .await?;
+
+    Ok(Json(serde_json::json!({
+        "volid": resp.volid,
+        "msg": resp.msg,
+        "storage": storage,
+        "cluster": cluster,
+    })))
+}
+
+/// `DELETE /api/v1/storages/:cluster/:node/:storage/content/:volid` — delete a volume
+/// from a storage pool.
+///
+/// Requires `Operator` role or higher.
+pub async fn delete_storage_content_handler(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Path((cluster, node, storage, volid)): Path<(String, String, String, String)>,
+) -> AppResult<Json<serde_json::Value>> {
+    if let Err(resp) = require_role(&auth, Role::Operator) {
+        let status = resp.status();
+        let err = if status == axum::http::StatusCode::FORBIDDEN {
+            AppError::Forbidden("operator role required".into())
+        } else {
+            AppError::Internal(format!("auth middleware returned {status}"))
+        };
+        return Err(err);
+    }
+
+    let client = state
+        .client(&cluster)
+        .ok_or_else(|| AppError::NotFound(format!("cluster '{cluster}' not configured")))?;
+
+    let upid = client.delete_storage_content(&node, &storage, &volid).await?;
+
+    Ok(Json(serde_json::json!({
+        "volid": volid,
+        "upid": upid,
+        "storage": storage,
+        "cluster": cluster,
+    })))
 }

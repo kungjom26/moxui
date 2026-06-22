@@ -100,7 +100,7 @@ pub async fn require_cluster_access(
     };
 
     // Check access.
-    if state.users.user_can_access_cluster(&claims.username, &cluster) {
+    if state.users.read().await.user_can_access_cluster(&claims.username, &cluster) {
         next.run(request).await
     } else {
         tracing::warn!(

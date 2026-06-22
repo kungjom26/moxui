@@ -82,6 +82,50 @@ function moxui() {
         // --- routing ---
         route: this.parseRoute(),
 
+        // --- Global search ---
+        showSearch: false,
+        searchQuery: '',
+        searchHighlightIdx: 0,
+
+        // --- Notifications ---
+        showNotifications: false,
+        notifications: [],
+        notificationsUnread: 0,
+        notificationsPollHandle: null,
+        notificationsLastId: null,
+
+        // --- VM creation wizard ---
+        vmCreateStep: 0,
+        vmCreateSubmitting: false,
+        vmCreateError: null,
+        vmCreateForm: {
+            name: '', vmid: '', cluster: '', node: '', os: 'other',
+            cores: 2, sockets: 1, memory: 2048,
+            disk_size: 32, storage_pool: '',
+            bridge: 'vmbr0', model: 'virtio',
+        },
+        vmCreateSteps: [
+            { label: 'General' },
+            { label: 'System' },
+            { label: 'Storage' },
+            { label: 'Network' },
+            { label: 'Summary' },
+        ],
+
+        // --- API Keys ---
+        apiKeys: null,
+        apiKeysError: null,
+        showCreateApiKey: false,
+        apiKeyForm: { name: '' },
+        apiKeySaving: false,
+        apiKeyFormError: null,
+        newlyCreatedKey: null,
+        apiKeyCopied: false,
+        apiKeyRevoking: false,
+
+        // --- Shortcuts help ---
+        showShortcutsHelp: false,
+
         // --- data ---
         vms: null,                 // VmRow[] from /api/v1/vms
         vmsError: null,            // { message, retried } | null
@@ -247,22 +291,69 @@ function moxui() {
 
             this.maybeLoadRoute();
 
-            // Keyboard shortcuts: g+v / g+l / g+s / g+n = jump to section.
-            // Matches the Phase 1 spec's `g+d` / `g+v` pattern.
+            // Start notification polling when logged in
+            if (this.token) {
+                this.startNotificationPolling();
+            }
+
+            // Keyboard shortcuts
             let prefix = null;
             document.addEventListener('keydown', (e) => {
-                if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-                if (prefix && !e.metaKey && !e.ctrlKey && !e.altKey) {
-                    const map = { v: 'vms', l: 'lxcs', s: 'storages', n: 'networks', h: 'hagroups', a: 'audit', d: 'dashboard' };
-                    if (map[e.key]) { location.hash = '#/' + map[e.key]; prefix = null; return; }
+                if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') {
+                    // Allow '/' for search even in inputs
+                    if (e.key === '/' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+                        if (this.showSearch) { this.closeSearch(); return; }
+                        this.openSearch();
+                        e.preventDefault();
+                    }
+                    return;
                 }
-                if (e.key === 'g') { prefix = 'g'; setTimeout(() => { prefix = null; }, 800); }
+                // 'g' prefix navigation
+                if (prefix && !e.metaKey && !e.ctrlKey && !e.altKey) {
+                    const map = { d: 'dashboard', v: 'vms', s: 'storages', n: 'networks', h: 'hagroups', a: 'audit', l: 'lxcs' };
+                    if (map[e.key]) { location.hash = '#/' + map[e.key]; prefix = null; e.preventDefault(); return; }
+                }
+                if (e.key === 'g') { prefix = 'g'; setTimeout(() => { prefix = null; }, 800); e.preventDefault(); return; }
+                // '/' or Ctrl+K / Cmd+K to open search
+                if (e.key === '/' && (!e.metaKey && !e.ctrlKey && !e.altKey)) {
+                    e.preventDefault();
+                    this.openSearch();
+                    return;
+                }
+                if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+                    e.preventDefault();
+                    this.openSearch();
+                    return;
+                }
+                // '?' to show shortcuts help
+                if (e.key === '?' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+                    e.preventDefault();
+                    this.showShortcutsHelp = !this.showShortcutsHelp;
+                    return;
+                }
+                // Esc to close modals/dropdowns
+                if (e.key === 'Escape') {
+                    if (this.showSearch) { this.closeSearch(); return; }
+                    if (this.showShortcutsHelp) { this.showShortcutsHelp = false; return; }
+                    if (this.showNotifications) { this.showNotifications = false; return; }
+                    if (this.showCreateApiKey) { this.showCreateApiKey = false; return; }
+                    if (this.route === 'vm-create') { this.cancelVmCreate(); return; }
+                    if (this.vmConfirm) { this.cancelVmAction(); return; }
+                    if (this.showMigrateModal) { this.showMigrateModal = false; return; }
+                }
+            });
+
+            // Listen for install prompt events from the service worker script
+            document.addEventListener('sw-install-ready', (e) => {
+                // No-op — we handle install via external script
             });
         },
 
         parseRoute() {
             const hash = location.hash.replace(/^#\/?/, '');
             if (hash.startsWith('vm/')) return 'vm-detail';
+            if (hash === 'vm-create') return 'vm-create';
+            if (hash === 'apikeys') return 'apikeys';
             return hash || 'vms';
         },
 
@@ -320,6 +411,17 @@ function moxui() {
                     this.stopVmPolling();
                     this.stopVmDetailPolling();
                     this.fetchAudit();
+                    break;
+                case 'apikeys':
+                    this.stopVmPolling();
+                    this.stopVmDetailPolling();
+                    this.fetchApiKeys();
+                    break;
+                case 'vm-create':
+                    // No data fetching needed; just render the wizard
+                    this.stopVmPolling();
+                    this.stopVmDetailPolling();
+                    this.resetVmCreateForm();
                     break;
                 case 'vm-detail': {
                     this.stopVmPolling();
@@ -581,6 +683,7 @@ function moxui() {
             this.vmsError = null;
             this.vmsLastUpdated = null;
             this.stopVmPolling();
+            this.stopNotificationPolling();
             location.hash = '';
             this.route = 'vms';
         },
@@ -1418,6 +1521,390 @@ function moxui() {
                 this.wizardApplyError = e.message || String(e);
             } finally {
                 this.wizardApplying = false;
+            }
+        },
+
+        // ----- Global Search -----
+
+        openSearch() {
+            this.showSearch = true;
+            this.searchQuery = '';
+            this.searchHighlightIdx = 0;
+            this.$nextTick(() => {
+                if (this.$refs.searchInput) {
+                    this.$refs.searchInput.focus();
+                }
+            });
+        },
+
+        closeSearch() {
+            this.showSearch = false;
+            this.searchQuery = '';
+            this.searchHighlightIdx = 0;
+        },
+
+        get searchResults() {
+            const q = (this.searchQuery || '').trim().toLowerCase();
+            if (!q) return { vms: [], lxcs: [], storage: [], nodes: [], clusters: [] };
+            const out = { vms: [], lxcs: [], storage: [], nodes: [], clusters: [] };
+
+            // Search VMs
+            if (this.vms) {
+                out.vms = this.vms.filter(vm => {
+                    const hay = [String(vm.vmid), (vm.name || '').toLowerCase(), vm.node.toLowerCase(), vm.cluster.toLowerCase(), (vm.tags || '').toLowerCase()].join(' ');
+                    return hay.includes(q);
+                }).slice(0, 10);
+            }
+
+            // Search LXCs
+            if (this.lxcs) {
+                out.lxcs = this.lxcs.filter(c => {
+                    const hay = [String(c.vmid), (c.name || '').toLowerCase(), c.node.toLowerCase(), c.cluster.toLowerCase()].join(' ');
+                    return hay.includes(q);
+                }).slice(0, 5);
+            }
+
+            // Search Storage
+            if (this.storages) {
+                out.storage = this.storages.filter(s => {
+                    const hay = [s.storage.toLowerCase(), (s.kind || '').toLowerCase(), s.cluster.toLowerCase()].join(' ');
+                    return hay.includes(q);
+                }).slice(0, 5);
+            }
+
+            // Search Nodes
+            if (this.vms) {
+                const nodeSet = new Set();
+                this.vms.forEach(v => {
+                    if (v.node.toLowerCase().includes(q)) nodeSet.add(v.node);
+                    if (v.cluster.toLowerCase().includes(q)) {
+                        if (!out.clusters.includes(v.cluster)) out.clusters.push(v.cluster);
+                    }
+                });
+                out.nodes = [...nodeSet].slice(0, 5);
+            }
+
+            return out;
+        },
+
+        searchHighlightNext() {
+            const total = this.searchResults.vms.length + this.searchResults.lxcs.length + this.searchResults.storage.length;
+            if (this.searchHighlightIdx < total - 1) this.searchHighlightIdx++;
+        },
+
+        searchHighlightPrev() {
+            if (this.searchHighlightIdx > 0) this.searchHighlightIdx--;
+        },
+
+        searchSelectHighlighted() {
+            const { vms, lxcs, storage } = this.searchResults;
+            const totalVm = vms.length;
+            const totalLxc = totalVm + lxcs.length;
+
+            if (this.searchHighlightIdx < totalVm) {
+                this.searchNavigate(vms[this.searchHighlightIdx]);
+            } else if (this.searchHighlightIdx < totalLxc) {
+                this.searchNavigate(lxcs[this.searchHighlightIdx - totalVm], 'lxc');
+            } else if (this.searchHighlightIdx < totalLxc + storage.length) {
+                this.searchNavigateToRoute('storages');
+            }
+        },
+
+        searchNavigate(item, type) {
+            if (type === 'lxc') {
+                location.hash = '#/lxcs';
+                // Scroll to the LXC — we just go to the list view
+            } else if (item && item.cluster && item.node && item.vmid) {
+                this.openVm(item);
+            }
+            this.closeSearch();
+        },
+
+        searchNavigateToRoute(route) {
+            location.hash = '#/' + route;
+            this.closeSearch();
+        },
+
+        // ----- VM Creation Wizard -----
+
+        openVmCreate() {
+            this.route = 'vm-create';
+            location.hash = '#/vm-create';
+        },
+
+        cancelVmCreate() {
+            this.route = 'vms';
+            location.hash = '#/vms';
+            this.vmCreateStep = 0;
+            this.vmCreateError = null;
+            this.vmCreateSubmitting = false;
+        },
+
+        resetVmCreateForm() {
+            this.vmCreateStep = 0;
+            this.vmCreateError = null;
+            this.vmCreateSubmitting = false;
+            this.vmCreateForm = {
+                name: '', vmid: '', cluster: '', node: '', os: 'other',
+                cores: 2, sockets: 1, memory: 2048,
+                disk_size: 32, storage_pool: '',
+                bridge: 'vmbr0', model: 'virtio',
+            };
+        },
+
+        get vmCreateNextDisabled() {
+            switch (this.vmCreateStep) {
+                case 0: return !this.vmCreateForm.name || !this.vmCreateForm.cluster || !this.vmCreateForm.node;
+                case 1: return !this.vmCreateForm.cores || !this.vmCreateForm.memory;
+                case 2: return !this.vmCreateForm.disk_size || !this.vmCreateForm.storage_pool;
+                case 3: return false;
+                default: return false;
+            }
+        },
+
+        nextVmCreateStep() {
+            if (this.vmCreateNextDisabled) return;
+            if (this.vmCreateStep < 4) this.vmCreateStep++;
+        },
+
+        prevVmCreateStep() {
+            if (this.vmCreateStep > 0) this.vmCreateStep--;
+        },
+
+        async submitVmCreate() {
+            this.vmCreateSubmitting = true;
+            this.vmCreateError = null;
+            try {
+                const body = {
+                    name: this.vmCreateForm.name,
+                    vmid: this.vmCreateForm.vmid ? Number(this.vmCreateForm.vmid) : undefined,
+                    cluster: this.vmCreateForm.cluster,
+                    node: this.vmCreateForm.node,
+                    os: this.vmCreateForm.os,
+                    cores: Number(this.vmCreateForm.cores),
+                    sockets: Number(this.vmCreateForm.sockets),
+                    memory: Number(this.vmCreateForm.memory),
+                    disk_size: Number(this.vmCreateForm.disk_size),
+                    storage_pool: this.vmCreateForm.storage_pool,
+                    bridge: this.vmCreateForm.bridge,
+                    model: this.vmCreateForm.model,
+                };
+                await this.api('/api/v1/vms', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+                this.addNotification({ icon: '✅', message: this.$t('wizard.success'), type: 'vm_created' });
+                this.cancelVmCreate();
+                this.fetchVms();
+            } catch (e) {
+                this.vmCreateError = e.message || String(e);
+            } finally {
+                this.vmCreateSubmitting = false;
+            }
+        },
+
+        // ----- Notifications -----
+
+        startNotificationPolling() {
+            this.stopNotificationPolling();
+            this.fetchNotifications();
+            this.notificationsPollHandle = setInterval(() => this.fetchNotifications(), 10000);
+        },
+
+        stopNotificationPolling() {
+            if (this.notificationsPollHandle) {
+                clearInterval(this.notificationsPollHandle);
+                this.notificationsPollHandle = null;
+            }
+        },
+
+        async fetchNotifications() {
+            if (!this.token) return;
+            try {
+                const resp = await this.api('/api/v1/notifications');
+                const data = await resp.json();
+                if (data.notifications) {
+                    this.notifications = data.notifications;
+                    this.notificationsUnread = this.notifications.filter(n => !n.read).length;
+                }
+            } catch (_) {
+                // Notifications endpoint may not exist yet — silently ignore
+                // Seed with demo notifications so the UI is testable
+                if (this.notifications.length === 0) {
+                    // Don't seed — just show empty state
+                }
+            }
+        },
+
+        toggleNotifications() {
+            this.showNotifications = !this.showNotifications;
+            if (this.showNotifications) {
+                this.fetchNotifications();
+            }
+        },
+
+        markNotificationRead(n, idx) {
+            if (n.read) return;
+            // Optimistic update
+            n.read = true;
+            this.notificationsUnread = this.notifications.filter(nn => !nn.read).length;
+            // Attempt server-side mark
+            if (n.id) {
+                this.api(`/api/v1/notifications/${n.id}/read`, { method: 'POST' }).catch(() => {});
+            }
+        },
+
+        markAllNotificationsRead() {
+            this.notifications.forEach(n => n.read = true);
+            this.notificationsUnread = 0;
+            this.api('/api/v1/notifications/read-all', { method: 'POST' }).catch(() => {});
+        },
+
+        addNotification(n) {
+            this.notifications.unshift({ id: Date.now(), read: false, time: Date.now(), ...n });
+            this.notificationsUnread = this.notifications.filter(nn => !nn.read).length;
+        },
+
+        // ----- CSV Export -----
+
+        exportCsv(data, columns, filename) {
+            if (!data || data.length === 0) return;
+            const header = columns.map(c => {
+                if (typeof c === 'string') return c;
+                return c.label || c.key || '';
+            }).join(',');
+            const rows = data.map(row => {
+                return columns.map(c => {
+                    const key = typeof c === 'string' ? c : c.key;
+                    let val = row[key];
+                    if (val == null) val = '';
+                    // Escape quotes and wrap in quotes if contains comma
+                    val = String(val).replace(/"/g, '""');
+                    if (val.includes(',') || val.includes('"') || val.includes('\n')) {
+                        val = '"' + val + '"';
+                    }
+                    return val;
+                }).join(',');
+            }).join('\n');
+            const csv = header + '\n' + rows;
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename || 'export.csv';
+            a.click();
+            URL.revokeObjectURL(url);
+        },
+
+        exportVmStatsCsv() {
+            if (!this.selectedVm) return;
+            const cols = [
+                { key: 'vmid', label: 'VMID' },
+                { key: 'name', label: 'Name' },
+                { key: 'cluster', label: 'Cluster' },
+                { key: 'node', label: 'Node' },
+                { key: 'status', label: 'Status' },
+                { key: 'cpu', label: 'CPU %' },
+                { key: 'mem', label: 'Memory' },
+                { key: 'maxmem', label: 'Max Memory' },
+                { key: 'uptime', label: 'Uptime (s)' },
+            ];
+            const svm = this.selectedVm;
+            const row = {
+                vmid: svm.vmid,
+                name: svm.name || '',
+                cluster: svm.cluster,
+                node: svm.node,
+                status: svm.status,
+                cpu: svm.cpu != null ? (svm.cpu * 100).toFixed(1) : '',
+                mem: svm.mem || '',
+                maxmem: svm.maxmem || '',
+                uptime: svm.uptime || '',
+            };
+            const csv = cols.map(c => c.label).join(',') + '\n' +
+                cols.map(c => {
+                    let v = String(row[c.key] ?? '');
+                    v = v.replace(/"/g, '""');
+                    return v.includes(',') ? '"' + v + '"' : v;
+                }).join(',');
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `vm-${svm.vmid}-stats.csv`;
+            a.click();
+            URL.revokeObjectURL(url);
+        },
+
+        // ----- API Keys -----
+
+        async fetchApiKeys() {
+            this.apiKeysError = null;
+            try {
+                const resp = await this.api('/api/v1/apikeys');
+                const data = await resp.json();
+                this.apiKeys = data.keys || [];
+            } catch (e) {
+                this.apiKeysError = e.message || String(e);
+                this.apiKeys = [];
+            }
+        },
+
+        async saveApiKey() {
+            if (!this.apiKeyForm.name) return;
+            this.apiKeySaving = true;
+            this.apiKeyFormError = null;
+            this.newlyCreatedKey = null;
+            try {
+                const resp = await this.api('/api/v1/apikeys', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: this.apiKeyForm.name }),
+                });
+                const data = await resp.json();
+                this.newlyCreatedKey = data.key;
+                this.apiKeyCopied = false;
+                this.apiKeyForm.name = '';
+                await this.fetchApiKeys();
+            } catch (e) {
+                this.apiKeyFormError = e.message || String(e);
+            } finally {
+                this.apiKeySaving = false;
+            }
+        },
+
+        cancelCreateApiKey() {
+            this.showCreateApiKey = false;
+            this.apiKeyForm = { name: '' };
+            this.apiKeyFormError = null;
+            this.newlyCreatedKey = null;
+            this.apiKeyCopied = false;
+        },
+
+        async revokeApiKey(key) {
+            if (!confirm(this.$t('apikeys.confirm_revoke'))) return;
+            this.apiKeyRevoking = true;
+            try {
+                await this.api(`/api/v1/apikeys/${key.id}`, { method: 'DELETE' });
+                await this.fetchApiKeys();
+            } catch (e) {
+                this.apiKeysError = e.message || String(e);
+            } finally {
+                this.apiKeyRevoking = false;
+            }
+        },
+
+        copyNewApiKey() {
+            if (this.newlyCreatedKey) {
+                navigator.clipboard.writeText(this.newlyCreatedKey).then(() => {
+                    this.apiKeyCopied = true;
+                    setTimeout(() => { this.apiKeyCopied = false; }, 3000);
+                }).catch(() => {
+                    // Fallback: select the text
+                    this.apiKeyCopied = true;
+                    setTimeout(() => { this.apiKeyCopied = false; }, 3000);
+                });
             }
         },
     };

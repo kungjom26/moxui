@@ -7,6 +7,10 @@
     <title>moxui</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📦</text></svg>" />
     <link rel="stylesheet" href="/static/app.css" />
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#0f172a" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 </head>
 <body>
     <!-- Login screen — shown when no token. -->
@@ -49,7 +53,51 @@
                 <a href="#/hagroups" :class="{ active: route === 'hagroups' }"><span x-text="$t('nav.ha')"></span></a>
                 <a href="#/dashboard" :class="{ active: route === 'dashboard' }"><span x-text="$t('nav.dashboard')"></span></a>
                 <a href="#/audit" :class="{ active: route === 'audit' }"><span x-text="$t('nav.audit')"></span></a>
+                <a href="#/apikeys" :class="{ active: route === 'apikeys' }"><span x-text="$t('nav.apikeys')"></span></a>
             </nav>
+            <!-- Global search shortcut -->
+            <button class="icon" @click="openSearch()" title="Search (Ctrl+K or Cmd+K)" style="font-size: 1rem; padding: 0.25rem 0.5rem;">
+                <span>🔍</span>
+            </button>
+            <!-- Notification bell -->
+            <div class="notification-bell-container" style="position: relative; display: inline-block;">
+                <button class="icon" @click="toggleNotifications()" title="Notifications" style="font-size: 1rem; padding: 0.25rem 0.5rem;">
+                    <span>🔔</span>
+                    <span class="notification-badge" x-show="notificationsUnread > 0"
+                          x-text="notificationsUnread > 99 ? '99+' : notificationsUnread"
+                          style="position: absolute; top: -4px; right: -6px; background: var(--error); color: white; font-size: 0.65rem; font-weight: 700; padding: 1px 5px; border-radius: 9999px; line-height: 1.2; min-width: 14px; text-align: center;"></span>
+                </button>
+                <!-- Notification dropdown -->
+                <div class="notification-dropdown" x-show="showNotifications" @click.outside="showNotifications = false"
+                     style="position: absolute; top: 100%; right: 0; width: 360px; max-height: 400px; overflow-y: auto; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.15); z-index: 50; margin-top: 4px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 1rem; border-bottom: 1px solid var(--border);">
+                        <strong x-text="$t('notifications.title')"></strong>
+                        <button class="link" @click="markAllNotificationsRead()" x-show="notifications.length > 0" style="font-size: 0.8rem;">
+                            <span x-text="$t('notifications.mark_all_read')"></span>
+                        </button>
+                    </div>
+                    <div x-show="notifications.length === 0" style="padding: 2rem 1rem; text-align: center;" class="muted">
+                        <span x-text="$t('notifications.empty')"></span>
+                    </div>
+                    <template x-for="(n, i) in notifications" :key="n.id">
+                        <div class="notification-item" :class="{ unread: !n.read }"
+                             @click="markNotificationRead(n, i)"
+                             style="padding: 0.75rem 1rem; border-bottom: 1px solid var(--border); cursor: pointer; display: flex; gap: 0.5rem; align-items: flex-start;"
+                             :style="!n.read ? 'background: var(--hover);' : ''">
+                            <span x-text="n.icon || 'ℹ️'" style="flex-shrink: 0;"></span>
+                            <div style="flex: 1; min-width: 0;">
+                                <div style="font-size: 0.85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" x-text="n.message"></div>
+                                <div style="font-size: 0.75rem;" class="muted">
+                                    <span x-text="n.time ? relativeTime(n.time) : $t('notifications.just_now')"></span>
+                                </div>
+                            </div>
+                            <button class="link" @click.stop="markNotificationRead(n, i)" style="flex-shrink: 0; font-size: 0.8rem;">
+                                <span x-show="!n.read" x-text="$t('notifications.mark_read')"></span>
+                            </button>
+                        </div>
+                    </template>
+                </div>
+            </div>
             <div class="spacer"></div>
             <button class="icon" @click="toggleTheme()" :title="theme === 'dark' ? $t('theme.light') : $t('theme.dark')">
                 <span x-text="theme === 'dark' ? '☀' : '🌙'"></span>
@@ -112,6 +160,8 @@
                         x-show="vmFilter.search || vmFilter.status || vmFilter.cluster || vmFilter.node">
                     Clear filters
                 </button>
+                <span class="spacer" style="flex:1"></span>
+                <button @click="openVmCreate()">+ <span x-text="$t('wizard.create_vm')"></span></button>
             </div>
 
             <p class="muted" x-show="vms === null">Loading…</p>
@@ -603,6 +653,11 @@
 
             <!-- Overview tab: live status + at-a-glance metrics. -->
             <div x-show="vmDetailTab === 'overview'">
+                <div class="toolbar" style="justify-content: flex-end;">
+                    <button class="link" @click="exportVmStatsCsv()" title="Export CSV" style="font-size: 0.8rem;">
+                        📥 <span x-text="$t('stats.export_csv')"></span>
+                    </button>
+                </div>
                 <table class="grid">
                     <tbody>
                         <tr><th>VMID</th><td x-text="selectedVm?.vmid"></td></tr>
@@ -753,6 +808,209 @@
                 </div>
             </div>
         </section>
+
+        <!-- API Keys management page -->
+        <section x-show="route === 'apikeys'">
+            <header class="section-head">
+                <h2><span x-text="$t('apikeys.title')"></span></h2>
+                <div class="meta">
+                    <button class="link" @click="fetchApiKeys()" title="Refresh">↻</button>
+                </div>
+            </header>
+            <p class="error" x-show="apiKeysError" x-text="apiKeysError"></p>
+            <div class="toolbar">
+                <button @click="showCreateApiKey = true">
+                    <span x-text="$t('apikeys.create')"></span>
+                </button>
+            </div>
+            <!-- Create API key form -->
+            <div class="card" x-show="showCreateApiKey" style="margin: 0.5rem 0; padding: 1rem;">
+                <h3><span x-text="$t('apikeys.create')"></span></h3>
+                <div style="display: grid; gap: 0.75rem;">
+                    <label>
+                        <span x-text="$t('apikeys.name')"></span>
+                        <input x-model="apiKeyForm.name" type="text" :placeholder="$t('apikeys.name_placeholder')" />
+                    </label>
+                </div>
+                <!-- New key display -->
+                <div x-show="newlyCreatedKey" class="card" style="margin: 0.75rem 0; padding: 0.75rem; border: 2px solid var(--success);">
+                    <p class="error" style="margin: 0 0 0.5rem 0;"><strong><span x-text="$t('apikeys.new_key_note')"></span></strong></p>
+                    <code style="display: block; padding: 0.5rem; background: var(--hover); border-radius: 4px; word-break: break-all; font-size: 0.8rem; user-select: all;" x-text="newlyCreatedKey"></code>
+                    <button class="link" @click="copyNewApiKey()" style="margin-top: 0.5rem;">
+                        <span x-text="apiKeyCopied ? $t('apikeys.copied') : $t('apikeys.copy')"></span>
+                    </button>
+                </div>
+                <p class="error" x-show="apiKeyFormError" x-text="apiKeyFormError"></p>
+                <div class="toolbar" style="margin-top: 0.75rem;">
+                    <button @click="saveApiKey()" :disabled="!apiKeyForm.name || apiKeySaving">
+                        <span x-text="apiKeySaving ? $t('apikeys.revoking') : $t('apikeys.create')"></span>
+                    </button>
+                    <button class="link" @click="cancelCreateApiKey()"><span x-text="$t('wizard.cancel')"></span></button>
+                </div>
+            </div>
+            <p class="muted" x-show="apiKeys === null"><span x-text="$t('vm.loading')"></span></p>
+            <p class="muted" x-show="apiKeys && apiKeys.length === 0"><span x-text="$t('apikeys.no_keys')"></span></p>
+            <table x-show="apiKeys && apiKeys.length > 0" class="grid">
+                <thead>
+                    <tr>
+                        <th><span x-text="$t('apikeys.key_name')"></span></th>
+                        <th><span x-text="$t('apikeys.created')"></span></th>
+                        <th><span x-text="$t('apikeys.last_used')"></span></th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="k in apiKeys" :key="k.id">
+                        <tr>
+                            <td x-text="k.name"></td>
+                            <td x-text="new Date(k.created_at * 1000).toLocaleString()"></td>
+                            <td x-text="k.last_used ? new Date(k.last_used * 1000).toLocaleString() : $t('apikeys.last_used_never')"></td>
+                            <td>
+                                <button class="link danger" @click="revokeApiKey(k)" :disabled="apiKeyRevoking">
+                                    <span x-text="apiKeyRevoking ? $t('apikeys.revoking') : $t('apikeys.revoke')"></span>
+                                </button>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </section>
+
+        <!-- VM creation wizard (overlay) -->
+        <div class="dialog-backdrop" x-show="route === 'vm-create'" @click.self="cancelVmCreate()">
+            <div class="dialog" style="width: 600px; max-width: 95vw; max-height: 90vh; overflow-y: auto;">
+                <header>
+                    <h3><span x-text="$t('wizard.create_vm')"></span></h3>
+                    <button class="link dialog-x" @click="cancelVmCreate()" title="Cancel">×</button>
+                </header>
+                <!-- Step indicators -->
+                <div style="display: flex; gap: 0; margin-bottom: 1.5rem; border: 1px solid var(--border); border-radius: 6px; overflow: hidden;">
+                    <template x-for="(s, i) in vmCreateSteps" :key="i">
+                        <div style="flex: 1; text-align: center; padding: 0.5rem; font-size: 0.75rem; font-weight: 600;"
+                             :style="'background: ' + (vmCreateStep === i ? 'var(--accent); color: var(--accent-fg)' : vmCreateStep > i ? 'var(--success); color: white' : 'var(--hover); color: var(--muted)') + '; border-right: 1px solid var(--border);'">
+                            <span x-text="s.label"></span>
+                        </div>
+                    </template>
+                </div>
+                <p class="error" x-show="vmCreateError" x-text="vmCreateError"></p>
+
+                <!-- Step 0: General -->
+                <div x-show="vmCreateStep === 0" style="display: grid; gap: 0.75rem;">
+                    <label><span x-text="$t('wizard.general.name')"></span>
+                        <input x-model="vmCreateForm.name" type="text" :placeholder="$t('wizard.general.name_placeholder')" />
+                    </label>
+                    <label><span x-text="$t('wizard.general.vmid')"></span>
+                        <input x-model="vmCreateForm.vmid" type="number" min="100" :placeholder="$t('wizard.general.vmid_auto')" />
+                    </label>
+                    <label><span x-text="$t('wizard.general.cluster')"></span>
+                        <select x-model="vmCreateForm.cluster" @change="vmCreateForm.node = ''">
+                            <option value=""><span x-text="$t('wizard.general.select_cluster')"></span></option>
+                            <template x-for="c in distinctClusters" :key="c">
+                                <option :value="c" x-text="c"></option>
+                            </template>
+                        </select>
+                    </label>
+                    <label><span x-text="$t('wizard.general.node')"></span>
+                        <select x-model="vmCreateForm.node">
+                            <option value=""><span x-text="$t('wizard.general.select_node')"></span></option>
+                            <template x-for="n in vmCreateForm.cluster ? (vms||[]).filter(v => v.cluster === vmCreateForm.cluster).map(v => v.node).filter((v,i,a) => a.indexOf(v) === i).sort() : []" :key="n">
+                                <option :value="n" x-text="n"></option>
+                            </template>
+                        </select>
+                    </label>
+                    <label><span x-text="$t('wizard.general.os')"></span>
+                        <select x-model="vmCreateForm.os">
+                            <option value="other"><span x-text="$t('wizard.general.os_other')"></span></option>
+                            <option value="linux"><span x-text="$t('wizard.general.os_linux')"></span></option>
+                            <option value="windows"><span x-text="$t('wizard.general.os_windows')"></span></option>
+                        </select>
+                    </label>
+                </div>
+
+                <!-- Step 1: System -->
+                <div x-show="vmCreateStep === 1" style="display: grid; gap: 0.75rem;">
+                    <label><span x-text="$t('wizard.system.cores')"></span>
+                        <input x-model="vmCreateForm.cores" type="number" min="1" value="2" />
+                    </label>
+                    <label><span x-text="$t('wizard.system.sockets')"></span>
+                        <input x-model="vmCreateForm.sockets" type="number" min="1" value="1" />
+                    </label>
+                    <label><span x-text="$t('wizard.system.memory')"></span>
+                        <input x-model="vmCreateForm.memory" type="number" min="128" :placeholder="$t('wizard.system.memory_placeholder')" />
+                    </label>
+                </div>
+
+                <!-- Step 2: Storage -->
+                <div x-show="vmCreateStep === 2" style="display: grid; gap: 0.75rem;">
+                    <label><span x-text="$t('wizard.storage.disk_size')"></span>
+                        <input x-model="vmCreateForm.disk_size" type="number" min="1" :placeholder="$t('wizard.storage.disk_size_placeholder')" />
+                    </label>
+                    <label><span x-text="$t('wizard.storage.pool')"></span>
+                        <select x-model="vmCreateForm.storage_pool">
+                            <option value=""><span x-text="$t('wizard.storage.select_pool')"></span></option>
+                            <template x-for="s in storages || []" :key="s.storage">
+                                <option :value="s.storage" x-text="s.storage"></option>
+                            </template>
+                        </select>
+                    </label>
+                </div>
+
+                <!-- Step 3: Network -->
+                <div x-show="vmCreateStep === 3" style="display: grid; gap: 0.75rem;">
+                    <label><span x-text="$t('wizard.network.bridge')"></span>
+                        <input x-model="vmCreateForm.bridge" type="text" :placeholder="$t('wizard.network.bridge_placeholder')" value="vmbr0" />
+                    </label>
+                    <label><span x-text="$t('wizard.network.model')"></span>
+                        <select x-model="vmCreateForm.model">
+                            <option value="virtio"><span x-text="$t('wizard.network.model_default')"></span></option>
+                            <option value="e1000"><span x-text="$t('wizard.network.model_e1000')"></span></option>
+                            <option value="rtl8139"><span x-text="$t('wizard.network.model_rtl8139')"></span></option>
+                            <option value="vmxnet3"><span x-text="$t('wizard.network.model_vmxnet3')"></span></option>
+                        </select>
+                    </label>
+                </div>
+
+                <!-- Step 4: Summary -->
+                <div x-show="vmCreateStep === 4">
+                    <p><span x-text="$t('wizard.summary.title')"></span></p>
+                    <table class="grid">
+                        <tr><th><span x-text="$t('wizard.general.name')"></span></th><td x-text="vmCreateForm.name || $t('wizard.summary.no_value')"></td></tr>
+                        <tr><th><span x-text="$t('wizard.general.vmid')"></span></th><td x-text="vmCreateForm.vmid || $t('wizard.general.vmid_auto')"></td></tr>
+                        <tr><th><span x-text="$t('wizard.general.cluster')"></span></th><td x-text="vmCreateForm.cluster || $t('wizard.summary.no_value')"></td></tr>
+                        <tr><th><span x-text="$t('wizard.general.node')"></span></th><td x-text="vmCreateForm.node || $t('wizard.summary.no_value')"></td></tr>
+                        <tr><th><span x-text="$t('wizard.general.os')"></span></th><td x-text="vmCreateForm.os || $t('wizard.summary.no_value')"></td></tr>
+                        <tr><th><span x-text="$t('wizard.system.cores')"></span></th><td x-text="vmCreateForm.cores || $t('wizard.summary.no_value')"></td></tr>
+                        <tr><th><span x-text="$t('wizard.system.sockets')"></span></th><td x-text="vmCreateForm.sockets || $t('wizard.summary.no_value')"></td></tr>
+                        <tr><th><span x-text="$t('wizard.system.memory')"></span></th><td x-text="vmCreateForm.memory ? vmCreateForm.memory + ' MiB' : $t('wizard.summary.no_value')"></td></tr>
+                        <tr><th><span x-text="$t('wizard.storage.disk_size')"></span></th><td x-text="vmCreateForm.disk_size ? vmCreateForm.disk_size + ' GiB' : $t('wizard.summary.no_value')"></td></tr>
+                        <tr><th><span x-text="$t('wizard.storage.pool')"></span></th><td x-text="vmCreateForm.storage_pool || $t('wizard.summary.no_value')"></td></tr>
+                        <tr><th><span x-text="$t('wizard.network.bridge')"></span></th><td x-text="vmCreateForm.bridge || $t('wizard.summary.no_value')"></td></tr>
+                        <tr><th><span x-text="$t('wizard.network.model')"></span></th><td x-text="vmCreateForm.model || $t('wizard.summary.no_value')"></td></tr>
+                    </table>
+                </div>
+
+                <!-- Navigation buttons -->
+                <div class="toolbar" style="margin-top: 1.5rem; justify-content: space-between;">
+                    <div>
+                        <button class="link" @click="prevVmCreateStep()" x-show="vmCreateStep > 0" style="margin-right: 0.5rem;">
+                            <span x-text="$t('wizard.back')"></span>
+                        </button>
+                    </div>
+                    <div>
+                        <button class="link" @click="cancelVmCreate()" style="margin-right: 0.5rem;">
+                            <span x-text="$t('wizard.cancel')"></span>
+                        </button>
+                        <button @click="nextVmCreateStep()" x-show="vmCreateStep < 4" :disabled="vmCreateNextDisabled">
+                            <span x-text="$t('wizard.next')"></span>
+                        </button>
+                        <button @click="submitVmCreate()" x-show="vmCreateStep === 4" :disabled="vmCreateSubmitting">
+                            <span x-text="vmCreateSubmitting ? $t('wizard.submitting') : $t('wizard.submit')"></span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
     </main>
 
     <!-- Wizard — shown on first-launch setup or #/wizard route. -->
@@ -910,7 +1168,178 @@
         </div>
     </main>
 
+    <!-- Global search overlay (Cmd+K / Ctrl+K) -->
+    <div class="dialog-backdrop" x-show="showSearch" @click.self="closeSearch()" x-cloak>
+        <div class="dialog" style="width: 550px; max-width: 95vw; padding: 0; overflow: hidden;">
+            <div style="display: flex; align-items: center; border-bottom: 1px solid var(--border);">
+                <span style="padding: 0 0.75rem; color: var(--muted);">🔍</span>
+                <input x-ref="searchInput" x-model="searchQuery" type="text"
+                       :placeholder="$t('search.placeholder')"
+                       @keydown.escape="closeSearch()"
+                       @keydown.down.prevent="searchHighlightNext()"
+                       @keydown.up.prevent="searchHighlightPrev()"
+                       @keydown.enter.prevent="searchSelectHighlighted()"
+                       style="flex: 1; border: 0; outline: none; background: transparent; padding: 0.85rem 0.75rem; font-size: 1rem;" />
+                <kbd style="margin-right: 0.75rem; padding: 0.2rem 0.5rem; background: var(--hover); border-radius: 4px; font-size: 0.7rem; color: var(--muted); border: 1px solid var(--border);">Esc</kbd>
+            </div>
+            <div style="max-height: 400px; overflow-y: auto;">
+                <!-- VMs -->
+                <div x-show="searchResults.vms.length > 0">
+                    <div style="padding: 0.5rem 0.75rem; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); background: var(--hover);">
+                        <span x-text="$t('search.results_vms')"></span> <span x-text="'(' + searchResults.vms.length + ')'"></span>
+                    </div>
+                    <template x-for="(r, i) in searchResults.vms" :key="'vm-'+i">
+                        <div class="search-result-item" :class="{ highlighted: searchHighlightIdx === i }"
+                             @click="searchNavigate(r)"
+                             @mouseenter="searchHighlightIdx = i"
+                             style="padding: 0.6rem 0.75rem; cursor: pointer; display: flex; gap: 0.5rem; align-items: center; border-bottom: 1px solid var(--border);"
+                             :style="searchHighlightIdx === i ? 'background: var(--hover);' : ''">
+                            <span>💻</span>
+                            <span style="font-weight: 600; min-width: 4em;" x-text="r.vmid"></span>
+                            <span x-text="r.name || '(unnamed)'" style="flex:1;"></span>
+                            <span class="muted" style="font-size: 0.8rem;" x-text="r.cluster + '/' + r.node"></span>
+                            <span class="badge" :class="'badge-' + r.status" x-text="r.status" style="min-width: 4em; text-align: center;"></span>
+                        </div>
+                    </template>
+                </div>
+                <!-- LXCs (reuse VM-like interface) -->
+                <div x-show="searchResults.lxcs.length > 0">
+                    <div style="padding: 0.5rem 0.75rem; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); background: var(--hover);">
+                        <span x-text="$t('search.results_lxcs')"></span> <span x-text="'(' + searchResults.lxcs.length + ')'"></span>
+                    </div>
+                    <template x-for="(r, i) in searchResults.lxcs" :key="'lxc-'+i">
+                        <div class="search-result-item" :class="{ highlighted: searchHighlightIdx === i + searchResults.vms.length }"
+                             @click="searchNavigate(r, 'lxc')"
+                             @mouseenter="searchHighlightIdx = i + searchResults.vms.length"
+                             style="padding: 0.6rem 0.75rem; cursor: pointer; display: flex; gap: 0.5rem; align-items: center; border-bottom: 1px solid var(--border);"
+                             :style="searchHighlightIdx === i + searchResults.vms.length ? 'background: var(--hover);' : ''">
+                            <span>📦</span>
+                            <span style="font-weight: 600; min-width: 4em;" x-text="r.vmid"></span>
+                            <span x-text="r.name || '(unnamed)'" style="flex:1;"></span>
+                            <span class="muted" style="font-size: 0.8rem;" x-text="r.cluster + '/' + r.node"></span>
+                            <span class="badge" :class="'badge-' + r.status" x-text="r.status" style="min-width: 4em; text-align: center;"></span>
+                        </div>
+                    </template>
+                </div>
+                <!-- Storage -->
+                <div x-show="searchResults.storage.length > 0">
+                    <div style="padding: 0.5rem 0.75rem; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); background: var(--hover);">
+                        <span x-text="$t('search.results_storage')"></span> <span x-text="'(' + searchResults.storage.length + ')'"></span>
+                    </div>
+                    <template x-for="(r, i) in searchResults.storage" :key="'stor-'+i">
+                        <div class="search-result-item" :class="{ highlighted: searchHighlightIdx === i + searchResults.vms.length + searchResults.lxcs.length }"
+                             @click="searchNavigateToRoute('storages')"
+                             @mouseenter="searchHighlightIdx = i + searchResults.vms.length + searchResults.lxcs.length"
+                             style="padding: 0.6rem 0.75rem; cursor: pointer; display: flex; gap: 0.5rem; align-items: center; border-bottom: 1px solid var(--border);"
+                             :style="searchHighlightIdx === i + searchResults.vms.length + searchResults.lxcs.length ? 'background: var(--hover);' : ''">
+                            <span>💾</span>
+                            <span x-text="r.storage" style="font-weight: 600; flex:1;"></span>
+                            <span class="muted" style="font-size: 0.8rem;" x-text="r.cluster"></span>
+                        </div>
+                    </template>
+                </div>
+                <!-- Nodes -->
+                <div x-show="searchResults.nodes.length > 0">
+                    <div style="padding: 0.5rem 0.75rem; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); background: var(--hover);">
+                        <span x-text="$t('search.results_nodes')"></span> <span x-text="'(' + searchResults.nodes.length + ')'"></span>
+                    </div>
+                    <template x-for="(r, i) in searchResults.nodes" :key="'node-'+i">
+                        <div style="padding: 0.6rem 0.75rem; display: flex; gap: 0.5rem; align-items: center; border-bottom: 1px solid var(--border);">
+                            <span>🖥️</span>
+                            <span x-text="r" style="flex:1;"></span>
+                        </div>
+                    </template>
+                </div>
+                <!-- Clusters -->
+                <div x-show="searchResults.clusters.length > 0">
+                    <div style="padding: 0.5rem 0.75rem; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); background: var(--hover);">
+                        <span x-text="$t('search.results_clusters')"></span> <span x-text="'(' + searchResults.clusters.length + ')'"></span>
+                    </div>
+                    <template x-for="(r, i) in searchResults.clusters" :key="'cl-'+i">
+                        <div style="padding: 0.6rem 0.75rem; display: flex; gap: 0.5rem; align-items: center; border-bottom: 1px solid var(--border);">
+                            <span>🌐</span>
+                            <span x-text="r" style="flex:1;"></span>
+                        </div>
+                    </template>
+                </div>
+                <!-- No results -->
+                <div x-show="searchQuery && searchResults.vms.length === 0 && searchResults.lxcs.length === 0 && searchResults.storage.length === 0 && searchResults.nodes.length === 0 && searchResults.clusters.length === 0"
+                     style="padding: 2rem 1rem; text-align: center;" class="muted">
+                    <span x-text="$t('search.no_results') + ' &quot;' + searchQuery + '&quot;'"></span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Keyboard shortcuts help modal -->
+    <div class="dialog-backdrop" x-show="showShortcutsHelp" @click.self="showShortcutsHelp = false" x-cloak>
+        <div class="dialog" style="width: 480px;">
+            <header>
+                <h3><span x-text="$t('shortcuts.title')"></span></h3>
+                <button class="link dialog-x" @click="showShortcutsHelp = false" title="Close (Esc)">×</button>
+            </header>
+            <div style="display: grid; gap: 0.5rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.4rem 0; border-bottom: 1px solid var(--border);">
+                    <span><span x-text="$t('shortcuts.dashboard')"></span></span>
+                    <kbd style="padding: 0.2rem 0.5rem; background: var(--hover); border-radius: 4px; font-size: 0.75rem; border: 1px solid var(--border);">g</kbd> <span class="muted" style="font-size: 0.8rem;">+</span> <kbd style="padding: 0.2rem 0.5rem; background: var(--hover); border-radius: 4px; font-size: 0.75rem; border: 1px solid var(--border);">d</kbd>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.4rem 0; border-bottom: 1px solid var(--border);">
+                    <span><span x-text="$t('shortcuts.vms')"></span></span>
+                    <kbd style="padding: 0.2rem 0.5rem; background: var(--hover); border-radius: 4px; font-size: 0.75rem; border: 1px solid var(--border);">g</kbd> <span class="muted" style="font-size: 0.8rem;">+</span> <kbd style="padding: 0.2rem 0.5rem; background: var(--hover); border-radius: 4px; font-size: 0.75rem; border: 1px solid var(--border);">v</kbd>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.4rem 0; border-bottom: 1px solid var(--border);">
+                    <span><span x-text="$t('shortcuts.storage')"></span></span>
+                    <kbd style="padding: 0.2rem 0.5rem; background: var(--hover); border-radius: 4px; font-size: 0.75rem; border: 1px solid var(--border);">g</kbd> <span class="muted" style="font-size: 0.8rem;">+</span> <kbd style="padding: 0.2rem 0.5rem; background: var(--hover); border-radius: 4px; font-size: 0.75rem; border: 1px solid var(--border);">s</kbd>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.4rem 0; border-bottom: 1px solid var(--border);">
+                    <span><span x-text="$t('shortcuts.network')"></span></span>
+                    <kbd style="padding: 0.2rem 0.5rem; background: var(--hover); border-radius: 4px; font-size: 0.75rem; border: 1px solid var(--border);">g</kbd> <span class="muted" style="font-size: 0.8rem;">+</span> <kbd style="padding: 0.2rem 0.5rem; background: var(--hover); border-radius: 4px; font-size: 0.75rem; border: 1px solid var(--border);">n</kbd>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.4rem 0; border-bottom: 1px solid var(--border);">
+                    <span><span x-text="$t('shortcuts.lxcs')"></span></span>
+                    <kbd style="padding: 0.2rem 0.5rem; background: var(--hover); border-radius: 4px; font-size: 0.75rem; border: 1px solid var(--border);">g</kbd> <span class="muted" style="font-size: 0.8rem;">+</span> <kbd style="padding: 0.2rem 0.5rem; background: var(--hover); border-radius: 4px; font-size: 0.75rem; border: 1px solid var(--border);">l</kbd>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.4rem 0; border-bottom: 1px solid var(--border);">
+                    <span><span x-text="$t('shortcuts.search')"></span></span>
+                    <kbd style="padding: 0.2rem 0.5rem; background: var(--hover); border-radius: 4px; font-size: 0.75rem; border: 1px solid var(--border);">Ctrl+K</kbd> <span class="muted" style="font-size: 0.8rem;">/</span> <kbd style="padding: 0.2rem 0.5rem; background: var(--hover); border-radius: 4px; font-size: 0.75rem; border: 1px solid var(--border);">⌘K</kbd>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.4rem 0; border-bottom: 1px solid var(--border);">
+                    <span><span x-text="$t('shortcuts.help')"></span></span>
+                    <kbd style="padding: 0.2rem 0.5rem; background: var(--hover); border-radius: 4px; font-size: 0.75rem; border: 1px solid var(--border);">?</kbd>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.4rem 0;">
+                    <span><span x-text="$t('shortcuts.close')"></span></span>
+                    <kbd style="padding: 0.2rem 0.5rem; background: var(--hover); border-radius: 4px; font-size: 0.75rem; border: 1px solid var(--border);">Esc</kbd>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="/static/vendor/alpine.min.js" defer></script>
     <script src="/static/app.js"></script>
+    <script>
+        // Service Worker registration for PWA support
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', function() {
+                navigator.serviceWorker.register('/sw.js').then(function(reg) {
+                    console.log('SW registered, scope:', reg.scope);
+                }, function(err) {
+                    console.warn('SW registration failed:', err);
+                });
+            });
+        }
+        // BeforeInstallPromptEvent handler
+        let deferredPrompt = null;
+        window.addEventListener('beforeinstallprompt', function(e) {
+            e.preventDefault();
+            deferredPrompt = e;
+            // Show install button (added to Alpine state)
+            document.dispatchEvent(new CustomEvent('sw-install-ready', { detail: true }));
+        });
+        window.addEventListener('appinstalled', function() {
+            deferredPrompt = null;
+            document.dispatchEvent(new CustomEvent('sw-install-ready', { detail: false }));
+        });
+    </script>
 </body>
 </html>

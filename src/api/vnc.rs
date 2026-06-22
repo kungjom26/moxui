@@ -20,14 +20,18 @@
 //! advertise an attack surface that isn't configured.
 
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 
-use axum::extract::ws::WebSocketUpgrade;
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::Response;
 use axum::Json;
+use futures_util::{SinkExt, StreamExt};
 use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
+use tokio_tungstenite::connect_async_with_config;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
 use crate::auth::middleware::require_role;
 use crate::auth::user::Role;
@@ -138,20 +142,20 @@ pub struct VncWsQuery {
 
 /// `GET /api/v1/vms/:cluster/:node/:vmid/vnc/ws?vnc_token=...`
 ///
-/// WebSocket proxy. Currently a stub: returns `501 Not Implemented`
-/// after verifying the token. The WS upgrade + bidirectional proxy
-/// is deferred — the ticket-mint path is the security-critical part
-/// and is what's wired today. Tracking issue: a Phase 2 follow-up
-/// (requires enabling the `__rustls-tls` feature on
-/// `tokio-tungstenite` and a test Proxmox to verify against).
+/// WebSocket proxy between the browser (noVNC) and Proxmox's
+/// `vncwebsocket` endpoint. On upgrade we:
+///
+/// 1. Verify the signed `vnc_token`.
+/// 2. Fetch a fresh Proxmox `vncproxy` ticket (short-lived).
+/// 3. Connect to Proxmox's internal VNC WebSocket.
+/// 4. Pipe data bidirectionally until either side disconnects.
 pub async fn vnc_ws_handler(
     State(state): State<AppState>,
     Path((cluster, node, vmid)): Path<(String, String, u32)>,
     Query(q): Query<VncWsQuery>,
-    _ws: WebSocketUpgrade,
+    ws: WebSocketUpgrade,
 ) -> AppResult<Response> {
-    // Verify the token even in the stub path — confirms the token
-    // mint/verify pipeline works end-to-end through the route.
+    // 1. Verify the moxui VNC token.
     let secret = state
         .vnc_secret
         .as_ref()
@@ -163,9 +167,165 @@ pub async fn vnc_ws_handler(
         return Err(AppError::Unauthorized("vnc token subject mismatch".into()));
     }
 
-    Err(AppError::Internal(
-        "vnc websocket proxy is a Phase 2 follow-up — see /api/v1/vms/.../vnc/ticket for token mint".into(),
-    ))
+    // 2. Look up the Proxmox client for this cluster.
+    let client = state
+        .client(&cluster)
+        .ok_or_else(|| AppError::NotFound(format!("cluster {cluster}")))?;
+
+    // 3. Fetch a fresh vncproxy ticket from Proxmox.
+    let upstream = client.vnc_proxy(&node, vmid).await?;
+
+    // 4. Build the upstream VNC WebSocket URL.
+    let host_url = client.base_url();
+    // Parse the host from the cluster URL (strip scheme + port).
+    let ws_scheme = if host_url.starts_with("https") { "wss" } else { "ws" };
+    let host = host_url
+        .trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .trim_end_matches('/');
+    let ws_url = format!(
+        "{ws_scheme}://{host}/api2/json/nodes/{node}/qemu/{vmid}/vncwebsocket?port={port}&vncticket={ticket}",
+        port = upstream.port,
+        ticket = upstream.ticket.expose_secret(),
+    );
+
+    // 5. Concurrency limiter — check we haven't exceeded the per-VM cap.
+    let limiter_key = format!("{cluster}:{node}:{vmid}");
+    let limiter = {
+        let mut limiters = state.vnc_limiters.lock().await;
+        limiters
+            .entry(limiter_key.clone())
+            .or_insert_with(|| Arc::new(crate::api::vnc::VncConnectionLimiter::new(MAX_VNC_CONNECTIONS_PER_VM)))
+            .clone()
+    };
+    let _guard = limiter.try_acquire().ok_or_else(|| {
+        AppError::TooManyRequests("too many concurrent VNC sessions for this VM".into())
+    })?;
+
+    // 6. Perform the WebSocket upgrade.
+    Ok(ws.on_upgrade(move |socket| {
+        proxmox_vnc_proxy(socket, ws_url, state.config.auth.jwt_issuer.clone())
+    }))
+}
+
+/// Bidirectional pipe between the browser's axum WebSocket and
+/// Proxmox's VNC WebSocket (via tokio-tungstenite).
+async fn proxmox_vnc_proxy(
+    browser_ws: WebSocket,
+    upstream_ws_url: String,
+    _issuer: String,
+) {
+    // Build the tungstenite request from the URL.
+    let request = match upstream_ws_url.into_client_request() {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(error = %e, "vnc: failed to build upstream WS request");
+            return;
+        }
+    };
+
+    // Connect to the Proxmox VNC WebSocket.
+    let (upstream_ws, _upstream_resp) = match connect_async_with_config(
+        request,
+        None,
+        false, // disable_auto_redirect
+    )
+    .await
+    {
+        Ok(connected) => connected,
+        Err(e) => {
+            tracing::error!(error = %e, "vnc: failed to connect to upstream WS");
+            return;
+        }
+    };
+
+    tracing::info!("vnc: WebSocket proxy connected, piping bidirectionally");
+
+    // Split both sides into sender + receiver halves.
+    let (mut browser_sender, mut browser_receiver) = browser_ws.split();
+    let (mut upstream_sender, mut upstream_receiver) = upstream_ws.split();
+
+    // Pipe: browser → upstream (binary frames only, VNC is raw RFB)
+    let browser_to_upstream = tokio::spawn(async move {
+        while let Some(msg) = browser_receiver.next().await {
+            match msg {
+                Ok(Message::Binary(data)) => {
+                    if let Err(e) = upstream_sender
+                        .send(tokio_tungstenite::tungstenite::Message::Binary(data))
+                        .await
+                    {
+                        tracing::debug!(error = %e, "vnc: browser→upstream send error");
+                        break;
+                    }
+                }
+                Ok(Message::Close(_)) => {
+                    let _ = upstream_sender
+                        .send(tokio_tungstenite::tungstenite::Message::Close(None))
+                        .await;
+                    break;
+                }
+                Ok(Message::Ping(data)) => {
+                    let _ = upstream_sender
+                        .send(tokio_tungstenite::tungstenite::Message::Ping(data))
+                        .await;
+                }
+                Ok(Message::Pong(data)) => {
+                    let _ = upstream_sender
+                        .send(tokio_tungstenite::tungstenite::Message::Pong(data))
+                        .await;
+                }
+                Ok(Message::Text(_)) => {
+                    // noVNC sends binary; ignore text frames
+                }
+                Err(e) => {
+                    tracing::debug!(error = %e, "vnc: browser WS recv error");
+                    break;
+                }
+            }
+        }
+    });
+
+    // Pipe: upstream → browser (binary frames only)
+    let upstream_to_browser = tokio::spawn(async move {
+        while let Some(msg) = upstream_receiver.next().await {
+            match msg {
+                Ok(tokio_tungstenite::tungstenite::Message::Binary(data)) => {
+                    if let Err(e) = browser_sender.send(Message::Binary(data)).await {
+                        tracing::debug!(error = %e, "vnc: upstream→browser send error");
+                        break;
+                    }
+                }
+                Ok(tokio_tungstenite::tungstenite::Message::Close(_)) => {
+                    let _ = browser_sender.send(Message::Close(None)).await;
+                    break;
+                }
+                Ok(tokio_tungstenite::tungstenite::Message::Ping(data)) => {
+                    let _ = browser_sender.send(Message::Ping(data)).await;
+                }
+                Ok(tokio_tungstenite::tungstenite::Message::Pong(data)) => {
+                    let _ = browser_sender.send(Message::Pong(data)).await;
+                }
+                Ok(tokio_tungstenite::tungstenite::Message::Text(_)) => {
+                    // ignore text from upstream
+                }
+                Ok(tokio_tungstenite::tungstenite::Message::Frame(_)) => {
+                    // ignore raw frames (handled by higher-level types)
+                }
+                Err(e) => {
+                    tracing::debug!(error = %e, "vnc: upstream WS recv error");
+                    break;
+                }
+            }
+        }
+    });
+
+    // Wait for either direction to finish, then drop everything.
+    tokio::select! {
+        _ = browser_to_upstream => {},
+        _ = upstream_to_browser => {},
+    }
+
+    tracing::info!("vnc: WebSocket proxy disconnected");
 }
 
 // ── Concurrency limiter ───────────────────────────────────────────

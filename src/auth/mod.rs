@@ -13,6 +13,7 @@
 //!   request extensions for downstream handlers.
 
 pub mod jwt;
+pub mod ldap;
 pub mod middleware;
 pub mod oidc;
 pub mod password;

@@ -2,12 +2,15 @@
 
 pub mod audit;
 pub mod auth;
+pub mod ceph;
 pub mod dashboard;
+pub mod firewall;
 pub mod hagroups;
 pub mod health;
 pub mod lxcs;
 pub mod networks;
 pub mod replication;
+pub mod sdn;
 pub mod storages;
 pub mod tasks;
 pub mod vms;
@@ -16,7 +19,7 @@ pub mod webauthn;
 
 use axum::{
     middleware::from_fn_with_state,
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
     Router,
 };
 
@@ -61,7 +64,8 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v1/auth/webauthn/login/complete",
             post(webauthn::login_complete),
-        );
+        )
+        .route("/api/v1/auth/ldap/login", post(auth::ldap_login));
 
     // Authenticated routes — require a valid Bearer token.
     // These are routes without `:cluster` path params (no per-cluster check needed).
@@ -93,6 +97,16 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/auth/webauthn/register/complete",
             post(webauthn::register_complete),
         )
+        // ── Batch 2: Auth + Ceph + Network + VNC Proxy ──
+        .route("/api/v1/users", get(auth::list_users).post(auth::create_user))
+        .route("/api/v1/users/:username", put(auth::update_user).delete(auth::delete_user))
+        .route("/api/v1/ceph/status", get(ceph::ceph_status))
+        .route("/api/v1/ceph/pools", get(ceph::ceph_pools))
+        .route("/api/v1/firewall/rules", get(firewall::firewall_rules))
+        .route("/api/v1/sdn/zones", get(sdn::sdn_zones))
+        .route("/api/v1/sdn/vnets", get(sdn::sdn_vnets))
+        .route("/api/v1/hagroups/status", get(hagroups::ha_status))
+        .route("/api/v1/networks/vlans", get(networks::list_vlans))
         .route_layer(from_fn_with_state(state.clone(), require_auth));
 
     // Cluster-scoped routes — require auth + cluster-level permissions.
@@ -110,18 +124,69 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/vms/:cluster/:node/:vmid/migrate",
             post(vms::migrate_vm_handler),
         )
+        // ── Batch 1: VM write routes ──
+        .route(
+            "/api/v1/vms/:cluster/:node/create",
+            post(vms::create_vm_handler),
+        )
+        .route(
+            "/api/v1/vms/:cluster/:node/:vmid/clone",
+            post(vms::clone_vm_handler),
+        )
+        .route(
+            "/api/v1/vms/:cluster/:node/:vmid/config",
+            get(vms::vm_config_handler).put(vms::update_vm_config_handler),
+        )
+        .route(
+            "/api/v1/vms/:cluster/:node/:vmid/snapshot",
+            get(vms::list_snapshots_handler).post(vms::create_snapshot_handler),
+        )
+        .route(
+            "/api/v1/vms/:cluster/:node/:vmid/snapshot/:snapname",
+            delete(vms::delete_snapshot_handler),
+        )
+        .route(
+            "/api/v1/vms/:cluster/:node/:vmid/snapshot/:snapname/rollback",
+            post(vms::rollback_snapshot_handler),
+        )
+        .route(
+            "/api/v1/vms/:cluster/:node/:vmid/backup",
+            post(vms::backup_vm_handler),
+        )
+        .route(
+            "/api/v1/vms/:cluster/:node/:vmid/backups",
+            get(vms::list_backups_handler),
+        )
+        .route(
+            "/api/v1/vms/:cluster/:node/:vmid/resize-disk",
+            post(vms::resize_disk_handler),
+        )
+        // ── LXC routes ──
         .route("/api/v1/lxcs/:cluster/:node/:vmid", get(lxcs::lxc_detail))
+        .route(
+            "/api/v1/lxcs/:cluster/:node/:vmid/:action",
+            post(lxcs::lxc_action_handler),
+        )
+        .route(
+            "/api/v1/lxcs/:cluster/:node/:vmid/delete",
+            post(lxcs::lxc_delete_handler),
+        )
+        // ── Storage routes ──
         .route(
             "/api/v1/storages/:cluster/:node/:storage/content",
             get(storages::storage_content),
         )
         .route(
-            "/api/v1/networks/:cluster/:node",
-            get(networks::node_networks),
+            "/api/v1/storages/:cluster/:node/:storage/upload",
+            post(storages::storage_upload_handler),
         )
         .route(
-            "/api/v1/vms/:cluster/:node/:vmid/config",
-            get(vms::vm_config_handler),
+            "/api/v1/storages/:cluster/:node/:storage/content/:volid",
+            delete(storages::delete_storage_content_handler),
+        )
+        .route(
+            "/api/v1/networks/:cluster/:node",
+            get(networks::node_networks),
         )
         .route(
             "/api/v1/tasks/:cluster/:node/:upid",

@@ -832,6 +832,304 @@ impl ProxmoxClient {
         let path = format!("cluster/replication/{id}/log");
         self.get(&path).await
     }
+
+    // ── Batch 1: VM/LXC/Storage Write Operations ────────────────────────────
+
+    /// Create a new QEMU VM.
+    ///
+    /// Proxmox endpoint: `POST /nodes/{node}/qemu` with form params.
+    /// Returns the new VMID as a string.
+    pub async fn create_vm(
+        &self,
+        node: &str,
+        params: Vec<(String, String)>,
+    ) -> AppResult<String> {
+        let path = format!("nodes/{node}/qemu");
+        self.post_with_query(&path, params).await
+    }
+
+    /// Clone a QEMU VM (linked or full clone).
+    ///
+    /// Proxmox endpoint: `POST /nodes/{node}/qemu/{vmid}/clone` with form params.
+    /// Returns the new VMID or UPID as a string.
+    pub async fn clone_vm(
+        &self,
+        node: &str,
+        vmid: u32,
+        params: Vec<(String, String)>,
+    ) -> AppResult<String> {
+        let path = format!("nodes/{node}/qemu/{vmid}/clone");
+        self.post_with_query(&path, params).await
+    }
+
+    /// Update a QEMU VM's configuration.
+    ///
+    /// Proxmox endpoint: `PUT /nodes/{node}/qemu/{vmid}/config` with form params
+    /// (Proxmox accepts POST for all state-changing operations).
+    /// Returns the UPID or confirmation string.
+    pub async fn update_vm_config(
+        &self,
+        node: &str,
+        vmid: u32,
+        params: Vec<(String, String)>,
+    ) -> AppResult<String> {
+        let path = format!("nodes/{node}/qemu/{vmid}/config");
+        self.post_with_query(&path, params).await
+    }
+
+    /// List all snapshots for a VM.
+    ///
+    /// Proxmox endpoint: `GET /nodes/{node}/qemu/{vmid}/snapshot`.
+    /// Returns a list of snapshot entries.
+    pub async fn list_snapshots(
+        &self,
+        node: &str,
+        vmid: u32,
+    ) -> AppResult<Vec<crate::proxmox::types::SnapshotEntry>> {
+        let path = format!("nodes/{node}/qemu/{vmid}/snapshot");
+        self.get(&path).await
+    }
+
+    /// Create a snapshot for a VM.
+    ///
+    /// Proxmox endpoint: `POST /nodes/{node}/qemu/{vmid}/snapshot` with form params.
+    /// Returns the UPID as a string.
+    pub async fn create_snapshot(
+        &self,
+        node: &str,
+        vmid: u32,
+        params: Vec<(String, String)>,
+    ) -> AppResult<String> {
+        let path = format!("nodes/{node}/qemu/{vmid}/snapshot");
+        self.post_with_query(&path, params).await
+    }
+
+    /// Delete a VM snapshot.
+    ///
+    /// Proxmox endpoint: `DELETE /nodes/{node}/qemu/{vmid}/snapshot/{snapname}`
+    /// with form params (Proxmox accepts POST for deletes).
+    pub async fn delete_snapshot(
+        &self,
+        node: &str,
+        vmid: u32,
+        snapname: &str,
+        force: bool,
+    ) -> AppResult<String> {
+        let path = format!("nodes/{node}/qemu/{vmid}/snapshot/{snapname}");
+        let params = vec![
+            (
+                "force".to_string(),
+                if force { "1" } else { "0" }.to_string(),
+            ),
+        ];
+        self.post_with_query(&path, params).await
+    }
+
+    /// Roll back a VM to a specific snapshot.
+    ///
+    /// Proxmox endpoint: `POST /nodes/{node}/qemu/{vmid}/snapshot/{snapname}/rollback`.
+    /// Returns the UPID as a string.
+    pub async fn rollback_snapshot(
+        &self,
+        node: &str,
+        vmid: u32,
+        snapname: &str,
+    ) -> AppResult<String> {
+        let path = format!("nodes/{node}/qemu/{vmid}/snapshot/{snapname}/rollback");
+        let params: Vec<(String, String)> = Vec::new();
+        self.post_with_query(&path, params).await
+    }
+
+    /// Trigger a VM backup.
+    ///
+    /// Proxmox endpoint: `POST /nodes/{node}/qemu/{vmid}/backup` with form params.
+    /// Returns the UPID as a string.
+    pub async fn backup_vm(
+        &self,
+        node: &str,
+        vmid: u32,
+        params: Vec<(String, String)>,
+    ) -> AppResult<String> {
+        let path = format!("nodes/{node}/qemu/{vmid}/backup");
+        self.post_with_query(&path, params).await
+    }
+
+    /// List backups for a VM by scanning storage content.
+    ///
+    /// Scans all storages on the node for backup files matching the VMID pattern,
+    /// then parses them into [`BackupEntry`] structs.
+    pub async fn list_backups(
+        &self,
+        node: &str,
+        vmid: u32,
+    ) -> AppResult<Vec<crate::proxmox::types::BackupEntry>> {
+        let storages = self
+            .list_storages(node)
+            .await?;
+        let mut backups = Vec::new();
+        let vmid_str = vmid.to_string();
+        for storage in &storages {
+            if let Ok(contents) = self.storage_content(node, &storage.storage).await {
+                for c in contents {
+                    if c.content == "backup" && c.volid.contains(&vmid_str) {
+                        backups.push(crate::proxmox::types::BackupEntry {
+                            volid: c.volid,
+                            storage: c.storage,
+                            filename: c.volid_name,
+                            size: c.size,
+                            format: c.format,
+                            ctime: c.ctime,
+                            notes: None,
+                        });
+                    }
+                }
+            }
+        }
+        Ok(backups)
+    }
+
+    /// Perform an action on an LXC container (start/stop/shutdown/reboot).
+    ///
+    /// Proxmox endpoint: `POST /nodes/{node}/lxc/{vmid}/status/{action}`.
+    /// Returns the UPID as a string.
+    pub async fn lxc_action(
+        &self,
+        node: &str,
+        vmid: u32,
+        action: &str,
+        params: Vec<(String, String)>,
+    ) -> AppResult<String> {
+        let path = format!("nodes/{node}/lxc/{vmid}/status/{action}");
+        self.post_with_query(&path, params).await
+    }
+
+    /// Delete an LXC container (and optionally its volumes).
+    ///
+    /// Proxmox endpoint: `POST /nodes/{node}/lxc/{vmid}` with form params
+    /// (Proxmox uses POST for delete operations).
+    pub async fn lxc_delete(
+        &self,
+        node: &str,
+        vmid: u32,
+        purge: bool,
+        force: bool,
+        skiplock: bool,
+    ) -> AppResult<String> {
+        let path = format!("nodes/{node}/lxc/{vmid}");
+        let params = vec![
+            (
+                "purge".to_string(),
+                if purge { "1" } else { "0" }.to_string(),
+            ),
+            (
+                "force".to_string(),
+                if force { "1" } else { "0" }.to_string(),
+            ),
+            (
+                "skiplock".to_string(),
+                if skiplock { "1" } else { "0" }.to_string(),
+            ),
+        ];
+        self.post_with_query(&path, params).await
+    }
+
+    /// Upload a file to a storage pool (ISO, container template, etc.).
+    ///
+    /// Proxmox endpoint: `POST /nodes/{node}/storage/{storage}/upload`
+    /// with multipart/form-data body.
+    ///
+    /// # Arguments
+    ///
+    /// * `node` — Proxmox node name.
+    /// * `storage` — Storage pool identifier (e.g. `local`).
+    /// * `content` — Content type (`iso`, `vztmpl`, `snippets`, etc.).
+    /// * `filename` — The original filename.
+    /// * `data` — Raw file bytes.
+    pub async fn upload_file(
+        &self,
+        node: &str,
+        storage: &str,
+        content: &str,
+        filename: &str,
+        data: Vec<u8>,
+    ) -> AppResult<crate::proxmox::types::UploadResponse> {
+        let ticket = self.current_ticket().await?;
+        let path = format!("nodes/{node}/storage/{storage}/upload");
+        let url = self.build_url(&path);
+
+        let part = reqwest::multipart::Part::bytes(data)
+            .file_name(filename.to_string())
+            .mime_str("application/octet-stream")
+            .map_err(|e| AppError::Internal(format!("mime error: {e}")))?;
+
+        let form = reqwest::multipart::Form::new()
+            .part("filename", part)
+            .text("content", content.to_string());
+
+        let fut = self
+            .http
+            .post(&url)
+            .multipart(form)
+            .header("Cookie", format!("PVEAuthCookie={}", ticket.ticket))
+            .header("CSRFPreventionToken", &ticket.csrf_token)
+            .send();
+
+        let resp = match tokio::time::timeout(Duration::from_secs(POST_TIMEOUT_SECS), fut).await {
+            Ok(result) => result?,
+            Err(_elapsed) => {
+                return Err(AppError::Proxmox(format!(
+                    "upload_file {path} timed out after {POST_TIMEOUT_SECS}s"
+                )))
+            }
+        };
+
+        self.handle_response::<crate::proxmox::types::UploadResponse>(resp)
+            .await
+    }
+
+    /// Delete a volume from a storage pool.
+    ///
+    /// Proxmox endpoint: `DELETE /nodes/{node}/storage/{storage}/content/{volid}`.
+    /// Proxmox accepts POST for delete operations.
+    pub async fn delete_storage_content(
+        &self,
+        node: &str,
+        storage: &str,
+        volid: &str,
+    ) -> AppResult<String> {
+        let path = format!("nodes/{node}/storage/{storage}/content/{volid}");
+        let params: Vec<(String, String)> = Vec::new();
+        self.post_with_query(&path, params).await
+    }
+
+    /// Resize a VM disk (supports scsi/virtio/ide/cloudinit disks).
+    ///
+    /// Proxmox endpoint: `POST /nodes/{node}/qemu/{vmid}/resize` with form params.
+    ///
+    /// For cloudinit disks (e.g. `cloudinit`), Proxmox resizes the cloud-init
+    /// drive directly. For regular disks (`scsi0`, `virtio0`, etc.), the standard
+    /// resize path is used.
+    ///
+    /// # Arguments
+    ///
+    /// * `node` — Proxmox node name.
+    /// * `vmid` — VM ID.
+    /// * `disk` — Disk identifier (e.g. `scsi0`, `virtio0`, `cloudinit`).
+    /// * `size` — Size change (e.g. `+10G` to grow, `-5G` to shrink, `32G` for absolute).
+    pub async fn resize_disk(
+        &self,
+        node: &str,
+        vmid: u32,
+        disk: &str,
+        size: &str,
+    ) -> AppResult<String> {
+        let path = format!("nodes/{node}/qemu/{vmid}/resize");
+        let params = vec![
+            ("disk".to_string(), disk.to_string()),
+            ("size".to_string(), size.to_string()),
+        ];
+        self.post_with_query(&path, params).await
+    }
 }
 
 #[cfg(test)]
@@ -1561,7 +1859,7 @@ mod vm_action_integration_tests {
 
         let resp = app
             .oneshot(authed_post(
-                "/api/v1/vms/homelab/pve11/103/snapshot",
+                "/api/v1/vms/homelab/pve11/103/fly",
                 &token,
             ))
             .await

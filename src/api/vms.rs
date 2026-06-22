@@ -12,6 +12,7 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 use crate::auth::{require_role, AuthContext, Role};
 use crate::error::{AppError, AppResult};
@@ -568,6 +569,430 @@ pub async fn bulk_delete(
 
     let results = join_all(futs).await;
     Ok(Json(BulkActionResponse { results }))
+}
+
+// ── Batch 1: VM Write Operations ──────────────────────────────────────────
+
+/// Helper: convert a `CreateVmRequest` into a Vec of query params.
+fn create_vm_params(req: &crate::proxmox::types::CreateVmRequest) -> Vec<(String, String)> {
+    let mut params = Vec::new();
+    if let Some(v) = req.vmid { params.push(("vmid".to_string(), v.to_string())); }
+    if let Some(ref v) = req.name { params.push(("name".to_string(), v.clone())); }
+    if let Some(ref v) = req.description { params.push(("description".to_string(), v.clone())); }
+    if let Some(v) = req.cores { params.push(("cores".to_string(), v.to_string())); }
+    if let Some(v) = req.sockets { params.push(("sockets".to_string(), v.to_string())); }
+    if let Some(v) = req.memory { params.push(("memory".to_string(), v.to_string())); }
+    if let Some(v) = req.balloon { params.push(("balloon".to_string(), v.to_string())); }
+    if let Some(ref v) = req.boot { params.push(("boot".to_string(), v.clone())); }
+    if let Some(ref v) = req.bios { params.push(("bios".to_string(), v.clone())); }
+    if let Some(ref v) = req.machine { params.push(("machine".to_string(), v.clone())); }
+    if let Some(ref v) = req.scsihw { params.push(("scsihw".to_string(), v.clone())); }
+    if let Some(ref v) = req.cpu { params.push(("cpu".to_string(), v.clone())); }
+    if let Some(ref v) = req.arch { params.push(("arch".to_string(), v.clone())); }
+    if let Some(ref v) = req.tags { params.push(("tags".to_string(), v.clone())); }
+    if let Some(v) = req.template { params.push(("template".to_string(), v.to_string())); }
+    if let Some(v) = req.onboot { params.push(("onboot".to_string(), v.to_string())); }
+    if let Some(v) = req.agent { params.push(("agent".to_string(), v.to_string())); }
+    if let Some(ref v) = req.storage { params.push(("storage".to_string(), v.clone())); }
+    if let Some(ref v) = req.disk_size { params.push(("sata0".to_string(), format!("{v}:{v}"))); }
+    if let Some(ref v) = req.net_model {
+        let bridge = req.net_bridge.as_deref().unwrap_or("vmbr0");
+        params.push(("net0".to_string(), format!("{v},bridge={bridge}")));
+    }
+    if let Some(ref v) = req.ostype { params.push(("ostype".to_string(), v.clone())); }
+    if let Some(ref v) = req.ide2 { params.push(("ide2".to_string(), v.clone())); }
+    if let Some(v) = req.start {
+        params.push(("start".to_string(), if v { "1" } else { "0" }.to_string()));
+    }
+    if let Some(v) = req.numa_enabled {
+        params.push(("numa".to_string(), if v { "1" } else { "0" }.to_string()));
+    }
+    params
+}
+
+/// Helper: convert a `CloneVmRequest` into a Vec of query params.
+fn clone_vm_params(req: &crate::proxmox::types::CloneVmRequest) -> Vec<(String, String)> {
+    let mut params = vec![("newid".to_string(), req.newid.to_string())];
+    if let Some(ref v) = req.target { params.push(("target".to_string(), v.clone())); }
+    if let Some(ref v) = req.name { params.push(("name".to_string(), v.clone())); }
+    if let Some(ref v) = req.storage { params.push(("storage".to_string(), v.clone())); }
+    params.push(("full".to_string(), if req.full { "1" } else { "0" }.to_string()));
+    if let Some(ref v) = req.snapname { params.push(("snapname".to_string(), v.clone())); }
+    if let Some(ref v) = req.description { params.push(("description".to_string(), v.clone())); }
+    if let Some(v) = req.start { params.push(("start".to_string(), if v { "1" } else { "0" }.to_string())); }
+    if let Some(ref v) = req.pool { params.push(("pool".to_string(), v.clone())); }
+    params
+}
+
+/// Helper: convert `UpdateVmConfigRequest` body into query params.
+/// Only `Some(...)` fields are included; `None` fields are skipped.
+fn update_vm_config_params(req: &crate::proxmox::types::UpdateVmConfigRequest) -> Vec<(String, String)> {
+    let mut params = Vec::new();
+    if let Some(ref v) = req.name { params.push(("name".to_string(), v.clone())); }
+    if let Some(ref v) = req.description { params.push(("description".to_string(), v.clone())); }
+    if let Some(v) = req.cores { params.push(("cores".to_string(), v.to_string())); }
+    if let Some(v) = req.sockets { params.push(("sockets".to_string(), v.to_string())); }
+    if let Some(v) = req.memory { params.push(("memory".to_string(), v.to_string())); }
+    if let Some(v) = req.balloon { params.push(("balloon".to_string(), v.to_string())); }
+    if let Some(ref v) = req.boot { params.push(("boot".to_string(), v.clone())); }
+    if let Some(ref v) = req.bios { params.push(("bios".to_string(), v.clone())); }
+    if let Some(ref v) = req.machine { params.push(("machine".to_string(), v.clone())); }
+    if let Some(ref v) = req.scsihw { params.push(("scsihw".to_string(), v.clone())); }
+    if let Some(ref v) = req.cpu { params.push(("cpu".to_string(), v.clone())); }
+    if let Some(ref v) = req.tags { params.push(("tags".to_string(), v.clone())); }
+    if let Some(v) = req.template { params.push(("template".to_string(), v.to_string())); }
+    if let Some(v) = req.onboot { params.push(("onboot".to_string(), v.to_string())); }
+    if let Some(v) = req.agent { params.push(("agent".to_string(), v.to_string())); }
+    if let Some(ref v) = req.delete { params.push(("delete".to_string(), v.clone())); }
+    if let Some(ref v) = req.ciuser { params.push(("ciuser".to_string(), v.clone())); }
+    if let Some(ref v) = req.sshkeys { params.push(("sshkeys".to_string(), v.clone())); }
+    if let Some(ref v) = req.ipconfig { params.push(("ipconfig".to_string(), v.clone())); }
+    if let Some(ref v) = req.nameserver { params.push(("nameserver".to_string(), v.clone())); }
+    if let Some(ref v) = req.searchdomain { params.push(("searchdomain".to_string(), v.clone())); }
+    if let Some(ref v) = req.net { params.push(("net0".to_string(), v.clone())); }
+    params
+}
+
+/// Helper: convert `BackupVmRequest` body into query params.
+fn backup_vm_params(req: &crate::proxmox::types::BackupVmRequest) -> Vec<(String, String)> {
+    let mut params = vec![
+        ("storage".to_string(), req.storage.clone()),
+        ("mode".to_string(), req.mode.clone()),
+        ("compress".to_string(), req.compress.clone()),
+    ];
+    if let Some(v) = req.remove {
+        params.push(("remove".to_string(), if v { "1" } else { "0" }.to_string()));
+    }
+    if let Some(ref v) = req.notes { params.push(("notes".to_string(), v.clone())); }
+    if let Some(ref v) = req.performance { params.push(("performance".to_string(), v.clone())); }
+    params
+}
+
+/// `POST /api/v1/vms/:cluster/:node/create` — create a new VM.
+///
+/// Requires `Operator` role or higher.
+pub async fn create_vm_handler(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Path((cluster, node)): Path<(String, String)>,
+    Json(body): Json<crate::proxmox::types::CreateVmRequest>,
+) -> AppResult<Json<serde_json::Value>> {
+    if let Err(resp) = require_role(&auth, Role::Operator) {
+        let status = resp.status();
+        let err = if status == axum::http::StatusCode::FORBIDDEN {
+            AppError::Forbidden("operator role required".into())
+        } else {
+            AppError::Internal(format!("auth middleware returned {status}"))
+        };
+        return Err(err);
+    }
+
+    let client = state
+        .client(&cluster)
+        .ok_or_else(|| AppError::NotFound(format!("cluster '{cluster}' not configured")))?;
+
+    let params = create_vm_params(&body);
+    let vmid_str = client.create_vm(&node, params).await?;
+
+    Ok(Json(json!({
+        "vmid_str": vmid_str,
+        "node": node,
+        "cluster": cluster,
+    })))
+}
+
+/// `POST /api/v1/vms/:cluster/:node/:vmid/clone` — clone a VM.
+///
+/// Requires `Operator` role or higher.
+pub async fn clone_vm_handler(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Path((cluster, node, vmid)): Path<(String, String, u32)>,
+    Json(body): Json<crate::proxmox::types::CloneVmRequest>,
+) -> AppResult<Json<serde_json::Value>> {
+    if let Err(resp) = require_role(&auth, Role::Operator) {
+        let status = resp.status();
+        let err = if status == axum::http::StatusCode::FORBIDDEN {
+            AppError::Forbidden("operator role required".into())
+        } else {
+            AppError::Internal(format!("auth middleware returned {status}"))
+        };
+        return Err(err);
+    }
+
+    let client = state
+        .client(&cluster)
+        .ok_or_else(|| AppError::NotFound(format!("cluster '{cluster}' not configured")))?;
+
+    let params = clone_vm_params(&body);
+    let upid = client.clone_vm(&node, vmid, params).await?;
+
+    Ok(Json(json!({
+        "vmid": vmid,
+        "newid": body.newid,
+        "upid": upid,
+        "cluster": cluster,
+    })))
+}
+
+/// `PUT /api/v1/vms/:cluster/:node/:vmid/config` — update VM configuration.
+///
+/// Requires `Operator` role or higher.
+pub async fn update_vm_config_handler(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Path((cluster, node, vmid)): Path<(String, String, u32)>,
+    Json(body): Json<crate::proxmox::types::UpdateVmConfigRequest>,
+) -> AppResult<Json<serde_json::Value>> {
+    if let Err(resp) = require_role(&auth, Role::Operator) {
+        let status = resp.status();
+        let err = if status == axum::http::StatusCode::FORBIDDEN {
+            AppError::Forbidden("operator role required".into())
+        } else {
+            AppError::Internal(format!("auth middleware returned {status}"))
+        };
+        return Err(err);
+    }
+
+    let client = state
+        .client(&cluster)
+        .ok_or_else(|| AppError::NotFound(format!("cluster '{cluster}' not configured")))?;
+
+    let params = update_vm_config_params(&body);
+    let upid = client.update_vm_config(&node, vmid, params).await?;
+
+    Ok(Json(json!({
+        "vmid": vmid,
+        "upid": upid,
+        "cluster": cluster,
+    })))
+}
+
+/// `GET /api/v1/vms/:cluster/:node/:vmid/snapshot` — list VM snapshots.
+///
+/// Requires `Operator` role or higher (snapshots modify VM state).
+pub async fn list_snapshots_handler(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Path((cluster, node, vmid)): Path<(String, String, u32)>,
+) -> AppResult<Json<serde_json::Value>> {
+    if let Err(resp) = require_role(&auth, Role::Operator) {
+        let status = resp.status();
+        let err = if status == axum::http::StatusCode::FORBIDDEN {
+            AppError::Forbidden("operator role required".into())
+        } else {
+            AppError::Internal(format!("auth middleware returned {status}"))
+        };
+        return Err(err);
+    }
+
+    let client = state
+        .client(&cluster)
+        .ok_or_else(|| AppError::NotFound(format!("cluster '{cluster}' not configured")))?;
+
+    let snapshots = client.list_snapshots(&node, vmid).await?;
+    Ok(Json(json!({ "snapshots": snapshots })))
+}
+
+/// `POST /api/v1/vms/:cluster/:node/:vmid/snapshot` — create a VM snapshot.
+///
+/// Requires `Operator` role or higher.
+pub async fn create_snapshot_handler(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Path((cluster, node, vmid)): Path<(String, String, u32)>,
+    Json(body): Json<crate::proxmox::types::CreateSnapshotRequest>,
+) -> AppResult<Json<serde_json::Value>> {
+    if let Err(resp) = require_role(&auth, Role::Operator) {
+        let status = resp.status();
+        let err = if status == axum::http::StatusCode::FORBIDDEN {
+            AppError::Forbidden("operator role required".into())
+        } else {
+            AppError::Internal(format!("auth middleware returned {status}"))
+        };
+        return Err(err);
+    }
+
+    let client = state
+        .client(&cluster)
+        .ok_or_else(|| AppError::NotFound(format!("cluster '{cluster}' not configured")))?;
+
+    let mut params = vec![
+        ("snapname".to_string(), body.snapname.clone()),
+        ("vmstate".to_string(), if body.vmstate { "1" } else { "0" }.to_string()),
+    ];
+    if let Some(ref desc) = body.description {
+        params.push(("description".to_string(), desc.clone()));
+    }
+
+    let upid = client.create_snapshot(&node, vmid, params).await?;
+
+    Ok(Json(json!({
+        "vmid": vmid,
+        "snapname": body.snapname,
+        "upid": upid,
+        "cluster": cluster,
+    })))
+}
+
+/// `DELETE /api/v1/vms/:cluster/:node/:vmid/snapshot/:snapname` — delete a VM snapshot.
+///
+/// Requires `Operator` role or higher.
+pub async fn delete_snapshot_handler(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Path((cluster, node, vmid, snapname)): Path<(String, String, u32, String)>,
+    body: Option<Json<crate::proxmox::types::DeleteSnapshotRequest>>,
+) -> AppResult<Json<serde_json::Value>> {
+    if let Err(resp) = require_role(&auth, Role::Operator) {
+        let status = resp.status();
+        let err = if status == axum::http::StatusCode::FORBIDDEN {
+            AppError::Forbidden("operator role required".into())
+        } else {
+            AppError::Internal(format!("auth middleware returned {status}"))
+        };
+        return Err(err);
+    }
+
+    let client = state
+        .client(&cluster)
+        .ok_or_else(|| AppError::NotFound(format!("cluster '{cluster}' not configured")))?;
+
+    let opts = body.map(|Json(b)| b).unwrap_or_default();
+    let upid = client.delete_snapshot(&node, vmid, &snapname, opts.force).await?;
+
+    Ok(Json(json!({
+        "vmid": vmid,
+        "snapname": snapname,
+        "upid": upid,
+        "cluster": cluster,
+    })))
+}
+
+/// `POST /api/v1/vms/:cluster/:node/:vmid/snapshot/:snapname/rollback` — roll back to a snapshot.
+///
+/// Requires `Operator` role or higher.
+pub async fn rollback_snapshot_handler(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Path((cluster, node, vmid, snapname)): Path<(String, String, u32, String)>,
+) -> AppResult<Json<serde_json::Value>> {
+    if let Err(resp) = require_role(&auth, Role::Operator) {
+        let status = resp.status();
+        let err = if status == axum::http::StatusCode::FORBIDDEN {
+            AppError::Forbidden("operator role required".into())
+        } else {
+            AppError::Internal(format!("auth middleware returned {status}"))
+        };
+        return Err(err);
+    }
+
+    let client = state
+        .client(&cluster)
+        .ok_or_else(|| AppError::NotFound(format!("cluster '{cluster}' not configured")))?;
+
+    let upid = client.rollback_snapshot(&node, vmid, &snapname).await?;
+
+    Ok(Json(json!({
+        "vmid": vmid,
+        "snapname": snapname,
+        "upid": upid,
+        "cluster": cluster,
+    })))
+}
+
+/// `POST /api/v1/vms/:cluster/:node/:vmid/backup` — trigger a VM backup.
+///
+/// Requires `Operator` role or higher.
+pub async fn backup_vm_handler(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Path((cluster, node, vmid)): Path<(String, String, u32)>,
+    Json(body): Json<crate::proxmox::types::BackupVmRequest>,
+) -> AppResult<Json<serde_json::Value>> {
+    if let Err(resp) = require_role(&auth, Role::Operator) {
+        let status = resp.status();
+        let err = if status == axum::http::StatusCode::FORBIDDEN {
+            AppError::Forbidden("operator role required".into())
+        } else {
+            AppError::Internal(format!("auth middleware returned {status}"))
+        };
+        return Err(err);
+    }
+
+    let client = state
+        .client(&cluster)
+        .ok_or_else(|| AppError::NotFound(format!("cluster '{cluster}' not configured")))?;
+
+    let params = backup_vm_params(&body);
+    let upid = client.backup_vm(&node, vmid, params).await?;
+
+    Ok(Json(json!({
+        "vmid": vmid,
+        "upid": upid,
+        "cluster": cluster,
+    })))
+}
+
+/// `GET /api/v1/vms/:cluster/:node/:vmid/backups` — list backups for a VM.
+///
+/// Requires `Operator` role or higher.
+pub async fn list_backups_handler(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Path((cluster, node, vmid)): Path<(String, String, u32)>,
+) -> AppResult<Json<serde_json::Value>> {
+    if let Err(resp) = require_role(&auth, Role::Operator) {
+        let status = resp.status();
+        let err = if status == axum::http::StatusCode::FORBIDDEN {
+            AppError::Forbidden("operator role required".into())
+        } else {
+            AppError::Internal(format!("auth middleware returned {status}"))
+        };
+        return Err(err);
+    }
+
+    let client = state
+        .client(&cluster)
+        .ok_or_else(|| AppError::NotFound(format!("cluster '{cluster}' not configured")))?;
+
+    let backups = client.list_backups(&node, vmid).await?;
+    Ok(Json(json!({ "backups": backups })))
+}
+
+/// `POST /api/v1/vms/:cluster/:node/:vmid/resize-disk` — resize a VM disk.
+///
+/// Requires `Operator` role or higher.
+/// Supports both regular disks (scsi0, virtio0) and cloudinit disks.
+pub async fn resize_disk_handler(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Path((cluster, node, vmid)): Path<(String, String, u32)>,
+    Json(body): Json<crate::proxmox::types::ResizeDiskRequest>,
+) -> AppResult<Json<serde_json::Value>> {
+    if let Err(resp) = require_role(&auth, Role::Operator) {
+        let status = resp.status();
+        let err = if status == axum::http::StatusCode::FORBIDDEN {
+            AppError::Forbidden("operator role required".into())
+        } else {
+            AppError::Internal(format!("auth middleware returned {status}"))
+        };
+        return Err(err);
+    }
+
+    let client = state
+        .client(&cluster)
+        .ok_or_else(|| AppError::NotFound(format!("cluster '{cluster}' not configured")))?;
+
+    let upid = client.resize_disk(&node, vmid, &body.disk, &body.size).await?;
+
+    Ok(Json(json!({
+        "vmid": vmid,
+        "disk": body.disk,
+        "size": body.size,
+        "upid": upid,
+        "cluster": cluster,
+    })))
 }
 
 #[cfg(test)]

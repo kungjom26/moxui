@@ -174,6 +174,9 @@ pub struct AuthConfig {
     /// OIDC / OAuth2 SSO configuration (Google, GitHub).
     #[serde(default)]
     pub oidc: OidcConfig,
+    /// LDAP / Active Directory authentication configuration.
+    #[serde(default)]
+    pub ldap: LdapConfig,
 }
 
 /// WebAuthn / passkey configuration.
@@ -235,6 +238,57 @@ impl Default for OidcConfig {
             providers: vec![],
         }
     }
+}
+
+/// LDAP / Active Directory authentication configuration.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct LdapConfig {
+    /// Enable LDAP / AD authentication.
+    #[serde(default)]
+    pub enabled: bool,
+    /// LDAP server URL (e.g., `ldap://dc01.example.com:389` or `ldaps://...:636`).
+    pub url: Option<String>,
+    /// Base DN for user searches (e.g., `dc=example,dc=com`).
+    pub base_dn: Option<String>,
+    /// Bind DN for initial LDAP connection (e.g., `cn=admin,dc=example,dc=com`).
+    pub bind_dn: Option<String>,
+    /// Password for the bind DN.
+    pub bind_password: Option<String>,
+    /// LDAP search filter template. `{username}` is replaced with the login name.
+    /// Default: `(&(objectClass=person)(uid={username}))`.
+    #[serde(default = "default_ldap_filter")]
+    pub user_filter: String,
+    /// Attribute name that holds the username (default: `uid`).
+    #[serde(default = "default_ldap_username_attr")]
+    pub username_attr: String,
+    /// Attribute name that holds the display name (default: `displayName`).
+    #[serde(default = "default_ldap_displayname_attr")]
+    pub displayname_attr: String,
+    /// Attribute name that holds the email (default: `mail`).
+    #[serde(default = "default_ldap_email_attr")]
+    pub email_attr: String,
+    /// Default role assigned to new LDAP users (default: `viewer`).
+    #[serde(default = "default_ldap_default_role")]
+    pub default_role: String,
+    /// Automatically create user accounts on successful LDAP login (default: true).
+    #[serde(default = "default_true")]
+    pub auto_create: bool,
+}
+
+fn default_ldap_filter() -> String {
+    "(&(objectClass=person)(uid={username}))".to_string()
+}
+fn default_ldap_username_attr() -> String {
+    "uid".to_string()
+}
+fn default_ldap_displayname_attr() -> String {
+    "displayName".to_string()
+}
+fn default_ldap_email_attr() -> String {
+    "mail".to_string()
+}
+fn default_ldap_default_role() -> String {
+    "viewer".to_string()
 }
 
 /// Configuration for a single OIDC / OAuth2 provider (Google or GitHub).

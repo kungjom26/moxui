@@ -202,3 +202,38 @@ pub async fn delete_ha_group(
         result,
     }))
 }
+
+/// `GET /api/v1/hagroups/status` — list HA-managed resources and their states.
+///
+/// Proxmox endpoint: `GET /api2/json/cluster/ha/status`
+pub async fn ha_status(State(state): State<AppState>) -> Json<serde_json::Value> {
+    use futures_util::future::join_all;
+
+    let futs = state.clients().map(|c| {
+        let name = c.name().to_string();
+        async move {
+            let result: Result<serde_json::Value, _> = c.get("cluster/ha/status").await;
+            (name, result)
+        }
+    });
+
+    let results = join_all(futs).await;
+
+    let mut data = std::collections::HashMap::new();
+    let mut errors = std::collections::HashMap::new();
+    for (name, result) in results {
+        match result {
+            Ok(status) => {
+                data.insert(name, status);
+            }
+            Err(e) => {
+                errors.insert(name, e.to_string());
+            }
+        }
+    }
+
+    Json(serde_json::json!({
+        "data": data,
+        "errors": errors,
+    }))
+}

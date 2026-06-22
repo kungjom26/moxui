@@ -1,6 +1,6 @@
 [package]
 name = "moxui"
-version = "1.2.0"
+version = "2.0.0"
 edition = "2021"
 rust-version = "1.78"
 license = "MIT"
@@ -30,7 +30,7 @@ tower = "0.4"
 tower-http = { version = "0.5", features = ["cors", "trace", "compression-gzip", "set-header"] }
 
 # HTTP client (Proxmox)
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream", "multipart"] }
 
 # Database
 rusqlite = { version = "0.31", features = ["bundled"] }
@@ -103,6 +103,9 @@ mime_guess = "2"
 # WebSocket + VNC proxy
 tokio-tungstenite = "0.21"
 futures-util = "0.3"
+
+# LDAP authentication
+ldap3 = "0.12"
 
 # Rate limiting
 governor = "0.10"

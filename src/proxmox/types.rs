@@ -531,6 +531,360 @@ pub struct HaGroup {
     pub restricted: Option<u8>,
 }
 
+// ── Batch 1: VM/LXC/Storage Write Operations ──────────────────────────────
+
+/// Request body for creating a VM.
+///
+/// Proxmox endpoint: `POST /nodes/{node}/qemu`.
+/// The `vmid` field is optional; Proxmox will auto-assign one if omitted.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CreateVmRequest {
+    /// VM ID (optional — auto-assigned if omitted).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vmid: Option<u32>,
+    /// VM name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// VM description / notes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Allocated vCPU cores.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cores: Option<u32>,
+    /// Allocated vCPU sockets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sockets: Option<u32>,
+    /// Memory size in MiB.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory: Option<u64>,
+    /// Memory ballooning minimum in MiB.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub balloon: Option<u64>,
+    /// Boot order (e.g. `order=scsi0;net0`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boot: Option<String>,
+    /// BIOS type (`seabios` or `ovmf`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bios: Option<String>,
+    /// Machine type (e.g. `pc-q35-8.1`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine: Option<String>,
+    /// SCSI controller model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scsihw: Option<String>,
+    /// CPU type (e.g. `host`, `kvm64`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu: Option<String>,
+    /// CPU architecture (`x86_64`, `aarch64`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arch: Option<String>,
+    /// Tags (semicolon-separated).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tags: Option<String>,
+    /// Whether this VM is a template (`1` = yes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub template: Option<u8>,
+    /// Start on boot (`1` = yes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub onboot: Option<u8>,
+    /// QEMU guest agent (`1` = enabled).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<u8>,
+    /// Storage pool for the VM disk (e.g. `local-lvm`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub storage: Option<String>,
+    /// Disk image size (e.g. `32G`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disk_size: Option<String>,
+    /// Network model for the default NIC.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub net_model: Option<String>,
+    /// Bridge for the default NIC.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub net_bridge: Option<String>,
+    /// OS type (e.g. `l26` for Linux 2.6+).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ostype: Option<String>,
+    /// IDE2 media (CDROM image).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ide2: Option<String>,
+    /// Start VM after creation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<bool>,
+    /// Sockets × cores = total vCPUs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub numa_enabled: Option<bool>,
+}
+
+/// Request body for cloning a VM.
+///
+/// Proxmox endpoint: `POST /nodes/{node}/qemu/{vmid}/clone`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloneVmRequest {
+    /// New VM ID (required).
+    pub newid: u32,
+    /// Target node (defaults to source node).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    /// New VM name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Target storage for the clone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub storage: Option<String>,
+    /// Whether to create a full clone (default: true for linked clones).
+    #[serde(default = "default_full_clone")]
+    pub full: bool,
+    /// Snapshot name to clone from (if not current state).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapname: Option<String>,
+    /// VM description.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Whether to start the cloned VM.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<bool>,
+    /// Pool to add the VM to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pool: Option<String>,
+}
+
+fn default_full_clone() -> bool {
+    true
+}
+
+/// Request body for updating a VM's configuration.
+///
+/// Proxmox endpoint: `PUT /nodes/{node}/qemu/{vmid}/config`.
+/// Only set fields will be updated; `None` fields are ignored.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UpdateVmConfigRequest {
+    /// VM name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// VM description.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Allocated vCPU cores.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cores: Option<u32>,
+    /// Allocated vCPU sockets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sockets: Option<u32>,
+    /// Memory size in MiB.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory: Option<u64>,
+    /// Memory ballooning minimum in MiB.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub balloon: Option<u64>,
+    /// Boot order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boot: Option<String>,
+    /// BIOS type (`seabios` or `ovmf`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bios: Option<String>,
+    /// Machine type.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine: Option<String>,
+    /// SCSI controller model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scsihw: Option<String>,
+    /// CPU type.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu: Option<String>,
+    /// Tags (semicolon-separated).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tags: Option<String>,
+    /// Template flag.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub template: Option<u8>,
+    /// Start on boot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub onboot: Option<u8>,
+    /// QEMU guest agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<u8>,
+    /// Delete specified config keys (comma-separated list of keys to reset to default).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delete: Option<String>,
+    /// Cloud-init CIUSER (ssh username).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ciuser: Option<String>,
+    /// Cloud-init SSH public keys.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sshkeys: Option<String>,
+    /// Cloud-init IP config (e.g. `ip=dhcp` or `ip=10.0.0.2/24,gw=10.0.0.1`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ipconfig: Option<String>,
+    /// Nameservers for cloud-init.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nameserver: Option<String>,
+    /// Search domain for cloud-init.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub searchdomain: Option<String>,
+    /// Network model override for specific NIC (e.g. `virtio` for `net0`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub net: Option<String>,
+}
+
+/// A single VM snapshot entry.
+///
+/// Proxmox endpoint: `GET /nodes/{node}/qemu/{vmid}/snapshot`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SnapshotEntry {
+    /// Snapshot name.
+    pub name: String,
+    /// Snapshot description.
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Snapshot creation time (Unix seconds).
+    #[serde(default)]
+    pub snaptime: Option<u64>,
+    /// VM configuration at snapshot time (serialized).
+    #[serde(default)]
+    pub vmstate: Option<u8>,
+    /// Whether this is the current (running) snapshot marker.
+    #[serde(default)]
+    pub parent: Option<String>,
+}
+
+/// A single backup file entry (parsed from storage content listing).
+///
+/// Proxmox stores backup files on storage; this represents one
+/// backup artifact for a given VM.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackupEntry {
+    /// Volume identifier (e.g. `local:backup/vzdump-qemu-100-2024_01_01-00_00_00.vma.zst`).
+    pub volid: String,
+    /// Storage name.
+    pub storage: String,
+    /// Backup filename.
+    #[serde(default)]
+    pub filename: Option<String>,
+    /// File size in bytes.
+    #[serde(default)]
+    pub size: u64,
+    /// Backup format (e.g. `vma`, `vma.zst`, `vma.gz`, `tar`).
+    #[serde(default)]
+    pub format: Option<String>,
+    /// Creation time (Unix seconds).
+    #[serde(default)]
+    pub ctime: Option<u64>,
+    /// Backup notes / comment.
+    #[serde(default)]
+    pub notes: Option<String>,
+}
+
+/// Request body for triggering a VM backup.
+///
+/// Proxmox endpoint: `POST /nodes/{node}/qemu/{vmid}/backup`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BackupVmRequest {
+    /// Target storage for the backup.
+    #[serde(default = "default_backup_storage")]
+    pub storage: String,
+    /// Backup mode (`snapshot`, `suspend`, `stop`).
+    #[serde(default = "default_backup_mode")]
+    pub mode: String,
+    /// Compression (`zstd`, `gzip`, `lzo`, `none`).
+    #[serde(default = "default_backup_compress")]
+    pub compress: String,
+    /// Whether to remove the backup from the VM's backup list after completion.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remove: Option<bool>,
+    /// Notes / comment for the backup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+    /// Perform a standard backup (not a template backup).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub performance: Option<String>,
+}
+
+fn default_backup_storage() -> String {
+    "local".to_string()
+}
+fn default_backup_mode() -> String {
+    "snapshot".to_string()
+}
+fn default_backup_compress() -> String {
+    "zstd".to_string()
+}
+
+/// Request body for creating a VM snapshot.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateSnapshotRequest {
+    /// Snapshot name (required).
+    pub snapname: String,
+    /// Snapshot description.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Whether to save the VM's memory state (default: true).
+    #[serde(default = "default_vmstate")]
+    pub vmstate: bool,
+}
+
+fn default_vmstate() -> bool {
+    true
+}
+
+/// Request body for deleting a VM snapshot.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DeleteSnapshotRequest {
+    /// Force removal even if the VM is running.
+    #[serde(default)]
+    pub force: bool,
+}
+
+/// Request body for disk resize operations.
+///
+/// Proxmox endpoint: `POST /nodes/{node}/qemu/{vmid}/resize`.
+/// Supports both regular disks (scsi0, virtio0, etc.) and cloudinit drives.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResizeDiskRequest {
+    /// Disk identifier (e.g. `scsi0`, `virtio0`, `ide0`, `cloudinit`).
+    pub disk: String,
+    /// Size to add/subtract (e.g. `+10G`, `-5G`, `32G` for absolute).
+    /// Use `+` prefix to grow, `-` to shrink. Absolute values set target size.
+    pub size: String,
+}
+
+/// Request body for LXC action (start / stop / shutdown / reboot).
+/// Typically no body is needed; the action is in the URL path.
+/// This exists for consistency with the VM action pattern.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LxcActionRequest {
+    /// Force the action (for stop/reboot, skip the graceful shutdown).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub force: Option<bool>,
+    /// Timeout in seconds before force-stopping.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<u32>,
+}
+
+/// Request body for deleting an LXC container.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DeleteLxcRequest {
+    /// Destroy and remove all volumes belonging to the container.
+    #[serde(default)]
+    pub purge: bool,
+    /// Force deletion even if running.
+    #[serde(default)]
+    pub force: bool,
+    /// Skip config lock.
+    #[serde(default)]
+    pub skiplock: bool,
+}
+
+/// Response from a storage upload operation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UploadResponse {
+    /// The uploaded volume identifier.
+    pub volid: String,
+    /// Status message.
+    #[serde(default)]
+    pub msg: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

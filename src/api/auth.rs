@@ -19,6 +19,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::auth::middleware::require_role;
 use crate::auth::refresh::DEFAULT_REFRESH_TTL_SECS;
 use crate::auth::{AuthContext, Claims, UserStore};
 use crate::state::AppState;
@@ -93,7 +94,8 @@ pub async fn login(
     State(state): State<AppState>,
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<serde_json::Value>, Response> {
-    let Some(user) = state.users.authenticate(&req.username, &req.password) else {
+    let users = state.users.read().await;
+    let Some(user) = users.authenticate(&req.username, &req.password) else {
         tracing::info!(username = %req.username, "login failed");
         return Err(unauthorized_response("invalid username or password"));
     };
@@ -214,7 +216,8 @@ pub async fn refresh(
     };
 
     // Look up the user to mint a fresh JWT.
-    let user = state.users.get_by_id(&new_refresh.user_id);
+    let users = state.users.read().await;
+    let user = users.get_by_id(&new_refresh.user_id);
     let Some(user) = user else {
         tracing::error!(
             user_id = %new_refresh.user_id,
@@ -311,7 +314,8 @@ pub async fn two_factor_complete(
     };
 
     // Look up the user.
-    let Some(user) = state.users.get_by_id(&session.user_id) else {
+    let users = state.users.read().await;
+    let Some(user) = users.get_by_id(&session.user_id) else {
         tracing::error!(user_id = %session.user_id, "pre-auth references nonexistent user");
         return Err(internal_response("user not found"));
     };
@@ -490,7 +494,8 @@ pub async fn two_factor_disable(
 ) -> Result<Json<serde_json::Value>, Response> {
     // Verify password
     let password = req["password"].as_str().unwrap_or("");
-    let Some(_user) = state.users.authenticate(&auth.claims.username, password) else {
+    let users = state.users.read().await;
+    let Some(_user) = users.authenticate(&auth.claims.username, password) else {
         return Err(unauthorized_response("invalid password"));
     };
 
@@ -682,6 +687,318 @@ pub async fn oidc_callback(
         user: UserView::from(&user),
         refresh_token: refresh.token,
     })))
+}
+
+// ── LDAP Login ─────────────────────────────────────────────────────
+
+/// Request body for LDAP login.
+#[derive(Debug, Deserialize)]
+pub struct LdapLoginRequest {
+    /// Login name.
+    pub username: String,
+    /// Plaintext password.
+    pub password: String,
+}
+
+/// `POST /api/v1/auth/ldap/login` — authenticate via LDAP/AD.
+///
+/// If LDAP is enabled and configured, this tries to bind the user
+/// against the configured LDAP server. On success, if the user
+/// doesn't exist locally and `auto_create` is enabled, a local
+/// user account is auto-created. Returns a JWT + refresh token
+/// identical to the regular login response.
+pub async fn ldap_login(
+    State(state): State<AppState>,
+    Json(req): Json<LdapLoginRequest>,
+) -> Result<Json<serde_json::Value>, Response> {
+    let ldap_cfg = &state.config.auth.ldap;
+    if !ldap_cfg.enabled || ldap_cfg.url.is_none() {
+        return Err(unauthorized_response("LDAP authentication is not enabled"));
+    }
+
+    // Attempt LDAP authentication
+    match crate::auth::ldap::verify_ldap_credentials(ldap_cfg, &req.username, &req.password).await {
+        Some(ldap_user) => {
+            // Check if user exists locally — create if auto_create is on
+            let user = {
+                let store = state.users.read().await;
+                store.get(&ldap_user.username).cloned()
+            };
+
+            let user = match user {
+                Some(existing) => {
+                    if !existing.enabled {
+                        return Err(unauthorized_response("account is disabled"));
+                    }
+                    existing
+                }
+                None => {
+                    if !ldap_cfg.auto_create {
+                        return Err(unauthorized_response(
+                            "LDAP user not found locally and auto-create is disabled",
+                        ));
+                    }
+                    // Auto-create the user
+                    let role: crate::auth::Role = ldap_cfg
+                        .default_role
+                        .parse()
+                        .unwrap_or(crate::auth::Role::Viewer);
+                    let new_user = crate::auth::User {
+                        id: crate::auth::ldap::ldap_user_id(&ldap_user.username),
+                        username: ldap_user.username.clone(),
+                        display_name: ldap_user.display_name.clone(),
+                        email: if ldap_user.email.is_empty() {
+                            None
+                        } else {
+                            Some(ldap_user.email.clone())
+                        },
+                        password_hash: secrecy::SecretString::new(
+                            // Generate a random password — user will use LDAP, not local auth
+                            uuid::Uuid::new_v4().to_string().into_boxed_str(),
+                        ),
+                        role,
+                        enabled: true,
+                        totp_secret: None,
+                        totp_enabled: false,
+                        backup_codes: vec![],
+                    };
+                    let username = new_user.username.clone();
+                    state.users.write().await.add_user(new_user.clone()).ok();
+                    tracing::info!(
+                        username = %username,
+                        "LDAP user auto-created"
+                    );
+                    new_user
+                }
+            };
+
+            // Issue JWT + refresh token
+            let now = chrono::Utc::now().timestamp();
+            let claims = crate::auth::Claims {
+                sub: user.id.clone(),
+                username: user.username.clone(),
+                role: user.role.to_string(),
+                iat: now,
+                exp: now + state.config.auth.jwt_lifetime_secs,
+            };
+            let token = match state.jwt.encode(&claims) {
+                Ok(t) => t,
+                Err(e) => {
+                    tracing::error!(error = %e, "JWT encode during LDAP login failed");
+                    return Err(internal_response("failed to sign token"));
+                }
+            };
+            let refresh = state
+                .refresh_store
+                .issue(&user.id, DEFAULT_REFRESH_TTL_SECS);
+
+            tracing::info!(
+                username = %user.username,
+                role = %user.role,
+                "LDAP login ok"
+            );
+            Ok(Json(serde_json::json!(LoginResponse {
+                token,
+                expires_in: state.config.auth.jwt_lifetime_secs,
+                token_type: "Bearer",
+                user: UserView::from(&user),
+                refresh_token: refresh.token,
+            })))
+        }
+        None => {
+            tracing::info!(username = %req.username, "LDAP login failed");
+            Err(unauthorized_response("invalid LDAP username or password"))
+        }
+    }
+}
+
+// ── Admin User CRUD ─────────────────────────────────────────────────
+
+/// Request body for `POST /api/v1/users` (create user).
+#[derive(Debug, Deserialize)]
+pub struct CreateUserRequest {
+    /// Unique user id.
+    pub id: String,
+    /// Login name.
+    pub username: String,
+    /// Display name.
+    #[serde(default)]
+    pub display_name: Option<String>,
+    /// Email.
+    #[serde(default)]
+    pub email: Option<String>,
+    /// Role: `admin` / `operator` / `viewer`.
+    pub role: String,
+    /// Plaintext password (will be bcrypt-hashed on create).
+    pub password: String,
+    /// Is this account enabled?
+    #[serde(default = "default_true_crud")]
+    pub enabled: bool,
+}
+
+fn default_true_crud() -> bool {
+    true
+}
+
+/// Request body for `PUT /api/v1/users/:username` (update user).
+#[derive(Debug, Deserialize)]
+pub struct UpdateUserRequest {
+    /// Display name (None = unchanged).
+    #[serde(default)]
+    pub display_name: Option<String>,
+    /// Email (None = unchanged).
+    #[serde(default)]
+    pub email: Option<String>,
+    /// Role (None = unchanged).
+    #[serde(default)]
+    pub role: Option<String>,
+    /// Plaintext password (None = unchanged, will be bcrypt-hashed).
+    #[serde(default)]
+    pub password: Option<String>,
+    /// Enabled flag (None = unchanged).
+    #[serde(default)]
+    pub enabled: Option<bool>,
+}
+
+/// `GET /api/v1/users` — list all users (Admin only).
+pub async fn list_users(
+    state: State<AppState>,
+    auth: crate::auth::middleware::AuthContext,
+) -> Result<Json<Vec<UserView>>, Response> {
+    if let Err(resp) = require_role(&auth, crate::auth::user::Role::Admin) {
+        return Err(resp);
+    }
+    let store = state.users.read().await;
+    let users: Vec<UserView> = store.list_users().map(|u| UserView::from(u)).collect();
+    Ok(Json(users))
+}
+
+/// `POST /api/v1/users` — create a new user (Admin only).
+pub async fn create_user(
+    state: State<AppState>,
+    auth: crate::auth::middleware::AuthContext,
+    Json(req): Json<CreateUserRequest>,
+) -> Result<Json<serde_json::Value>, Response> {
+    if let Err(resp) = require_role(&auth, crate::auth::user::Role::Admin) {
+        return Err(resp);
+    }
+
+    let hash = match crate::auth::password::hash_password(&req.password) {
+        Ok(h) => h,
+        Err(e) => {
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": format!("failed to hash password: {e}")})),
+            )
+                .into_response());
+        }
+    };
+
+    let role: crate::auth::Role = match req.role.parse() {
+        Ok(r) => r,
+        Err(e) => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": e})),
+            )
+                .into_response());
+        }
+    };
+
+    let user = crate::auth::User {
+        id: req.id,
+        username: req.username,
+        display_name: req.display_name.unwrap_or_default(),
+        email: req.email,
+        password_hash: secrecy::SecretString::new(hash.into_boxed_str()),
+        role,
+        enabled: req.enabled,
+        totp_secret: None,
+        totp_enabled: false,
+        backup_codes: vec![],
+    };
+
+    let username = user.username.clone();
+    match state.users.write().await.add_user(user) {
+        Ok(()) => {
+            tracing::info!(username = %username, "user created by admin");
+            Ok(Json(serde_json::json!({"status": "created", "username": username})))
+        }
+        Err(e) => Err((
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({"error": e})),
+        )
+            .into_response()),
+    }
+}
+
+/// `PUT /api/v1/users/:username` — update an existing user (Admin only).
+pub async fn update_user(
+    State(state): State<AppState>,
+    auth: crate::auth::middleware::AuthContext,
+    axum::extract::Path(username): axum::extract::Path<String>,
+    Json(req): Json<UpdateUserRequest>,
+) -> Result<Json<serde_json::Value>, Response> {
+    if let Err(resp) = require_role(&auth, crate::auth::user::Role::Admin) {
+        return Err(resp);
+    }
+
+    let password_hash = if let Some(pw) = &req.password {
+        Some(
+            crate::auth::password::hash_password(pw)
+                .map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({"error": format!("failed to hash password: {e}")})),
+                    )
+                        .into_response()
+                })?,
+        )
+    } else {
+        None
+    };
+
+    match state.users.write().await.update_user(
+        &username,
+        req.display_name.as_deref(),
+        req.email.as_deref(),
+        req.role.as_deref(),
+        password_hash.as_deref(),
+        req.enabled,
+    ) {
+        Ok(()) => {
+            tracing::info!(username = %username, "user updated by admin");
+            Ok(Json(serde_json::json!({"status": "updated", "username": username})))
+        }
+        Err(e) => Err((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": e})),
+        )
+            .into_response()),
+    }
+}
+
+/// `DELETE /api/v1/users/:username` — delete a user (Admin only).
+pub async fn delete_user(
+    State(state): State<AppState>,
+    auth: crate::auth::middleware::AuthContext,
+    axum::extract::Path(username): axum::extract::Path<String>,
+) -> Result<Json<serde_json::Value>, Response> {
+    if let Err(resp) = require_role(&auth, crate::auth::user::Role::Admin) {
+        return Err(resp);
+    }
+
+    match state.users.write().await.delete_user(&username) {
+        Ok(()) => {
+            tracing::info!(username = %username, "user deleted by admin");
+            Ok(Json(serde_json::json!({"status": "deleted", "username": username})))
+        }
+        Err(e) => Err((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": e})),
+        )
+            .into_response()),
+    }
 }
 
 // ── Helpers ────────────────────────────────────────────────────────
