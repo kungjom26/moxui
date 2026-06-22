@@ -47,6 +47,8 @@ bcrypt = "0.15"
 hmac = "0.12"
 sha2 = "0.10"
 base64 = "0.22"
+hex = "0.4"
+rand = "0.8"
 
 # Secret management (security: protect credentials in memory)
 secrecy = { version = "0.10", features = ["serde"] }

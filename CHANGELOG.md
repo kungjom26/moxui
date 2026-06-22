@@ -5,6 +5,45 @@ All notable changes to moxui are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+---
+
+## [0.2.0] — 2026-06-22
+
+### Phase 2 — Refresh token + logout (Day 15)
+
+Added refresh token rotation (7-day TTL), family revocation replay detection,
+logout endpoint, and full integration tests.
+
+#### Added
+
+- **`auth::refresh` module**: `RefreshStore` with `issue` / `verify` / `revoke` /
+  `revoke_all_for_user` / `rotate`. Tokens are 32-byte random values (256-bit
+  entropy), stored as SHA-256 hashes only. Family revocation: replaying a
+  revoked token revokes all tokens for that user.
+- **`POST /api/v1/auth/refresh`**: exchange a refresh token for a new JWT + new
+  refresh token (rotation). Invalid/expired/replayed tokens return 401.
+- **`POST /api/v1/auth/logout`**: revoke a refresh token. Always returns 200
+  to avoid leaking token validity.
+- **Login response**: now includes `refresh_token` field alongside the JWT.
+- **`UserStore::get_by_id`**: look up a user by their `id` field (used by the
+  refresh handler after rotating the refresh token).
+
+#### Security
+
+- SHA-256 hashed refresh tokens (plaintext never persisted).
+- Rotation invalidates the old token on each use.
+- Family revocation: replayed tokens trigger full user token invalidation.
+- Logout always returns 200 (no oracle for token validity).
+
+#### Statistics
+
+| Metric | Value |
+|---|---|
+| Source lines (lib + bin) | ~3700 |
+| Test count | 133 (+15 from Day 14) |
+| Refresh token entropy | 256 bits |
+| Refresh token TTL | 7 days |
+
 ## [0.1.1] — 2026-06-22
 
 ### Phase 1 polish (Day 14)

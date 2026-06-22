@@ -1822,6 +1822,185 @@ mod vm_action_integration_tests {
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
+    // ── Day 15: Refresh + logout integration tests ────────────────
+
+    /// Helper: login and extract the refresh token.
+    async fn login_and_get_refresh(
+        app: &mut axum::Router,
+    ) -> (String, String) {
+        let body = r#"{"username":"admin","password":"admin-pwd"}"#;
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/login")
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        let token = body["token"].as_str().unwrap().to_string();
+        let refresh_token = body["refresh_token"].as_str().unwrap().to_string();
+        (token, refresh_token)
+    }
+
+    #[tokio::test]
+    async fn test_auth_login_returns_refresh_token() {
+        let (state, _audit) = setup_auth_state().await;
+        let mut app = crate::api::router(state);
+
+        let (token, refresh_token) = login_and_get_refresh(&mut app).await;
+        assert!(!token.is_empty(), "JWT should be present");
+        assert!(!refresh_token.is_empty(), "refresh token should be present");
+        // 32 random bytes → base64-no-pad = ceil(32*4/3) = 43 chars
+        assert_eq!(refresh_token.len(), 43, "base64 32-byte no pad = 43 chars");
+    }
+
+    #[tokio::test]
+    async fn test_auth_refresh_issues_new_tokens() {
+        let (state, _audit) = setup_auth_state().await;
+        let mut app = crate::api::router(state);
+
+        let (_original_token, refresh_token) = login_and_get_refresh(&mut app).await;
+
+        // Use the refresh token to get a new JWT + new refresh token.
+        let body = serde_json::json!({ "refresh_token": refresh_token }).to_string();
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/refresh")
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        let new_token = body["token"].as_str().unwrap().to_string();
+        let new_refresh = body["refresh_token"].as_str().unwrap().to_string();
+
+        // New refresh token should be different (rotation).
+        assert_ne!(new_refresh, refresh_token, "refresh token should rotate");
+        // New refresh token should be usable.
+        assert_eq!(new_refresh.len(), 43);
+
+        // Old refresh token should be revoked — reuse should fail.
+        let body2 = serde_json::json!({ "refresh_token": refresh_token }).to_string();
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/refresh")
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body2))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // Replay of revoked token triggers family revocation → 401.
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_auth_refresh_bad_token_returns_401() {
+        let (state, _audit) = setup_auth_state().await;
+        let app = crate::api::router(state);
+
+        let body = serde_json::json!({ "refresh_token": "bogus-token-value" }).to_string();
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/refresh")
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_auth_logout_revokes_token() {
+        let (state, _audit) = setup_auth_state().await;
+        let mut app = crate::api::router(state);
+
+        let (_token, refresh_token) = login_and_get_refresh(&mut app).await;
+
+        // Logout — revoke the refresh token.
+        let body = serde_json::json!({ "refresh_token": refresh_token }).to_string();
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/logout")
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(body["ok"], true);
+
+        // After logout, the refresh token should be rejected.
+        let body2 = serde_json::json!({ "refresh_token": refresh_token }).to_string();
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/refresh")
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body2))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_auth_logout_always_returns_200() {
+        let (state, _audit) = setup_auth_state().await;
+        let app = crate::api::router(state);
+
+        // Logout with a bogus token — should still return 200 (don't
+        // leak whether the token was valid).
+        let body = serde_json::json!({ "refresh_token": "completely-bogus" }).to_string();
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/logout")
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(body["ok"], true);
+    }
+
     // ── Day 14: VM config integration test ─────────────────────────
 
     #[tokio::test]

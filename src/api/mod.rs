@@ -40,7 +40,9 @@ pub fn router(state: AppState) -> Router {
         .route("/health", get(health::health))
         .route("/livez", get(health::livez))
         .route("/readyz", get(health::readyz))
-        .route("/api/v1/auth/login", post(auth::login));
+        .route("/api/v1/auth/login", post(auth::login))
+        .route("/api/v1/auth/refresh", post(auth::refresh))
+        .route("/api/v1/auth/logout", post(auth::logout));
 
     // Authenticated routes — require a valid Bearer token.
     let protected = Router::new()
