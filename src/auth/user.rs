@@ -41,6 +41,14 @@ pub struct User {
     pub role: Role,
     /// Is this account enabled? Disabled accounts cannot log in (returns 403).
     pub enabled: bool,
+    /// Base32-encoded TOTP secret (set during 2FA setup). `None` = 2FA not configured.
+    pub totp_secret: Option<String>,
+    /// Whether 2FA (TOTP) is fully enabled for this account.
+    /// Set to `true` after the user verifies their first TOTP code.
+    pub totp_enabled: bool,
+    /// Bcrypt-hashed backup codes (8 single-use 8-digit codes).
+    /// Generated when 2FA is set up, consumed one by one.
+    pub backup_codes: Vec<secrecy::SecretString>,
 }
 
 /// RBAC role. Lower numeric value = higher privilege.
@@ -147,6 +155,9 @@ impl User {
             password_hash: SecretString::new(hash.into_boxed_str()),
             role,
             enabled: cfg.enabled,
+            totp_secret: None,
+            totp_enabled: false,
+            backup_codes: vec![],
         })
     }
 }
@@ -237,6 +248,9 @@ mod tests {
             password_hash: SecretString::new(hash.into_boxed_str()),
             role,
             enabled: true,
+            totp_secret: None,
+            totp_enabled: false,
+            backup_codes: vec![],
         }
     }
 

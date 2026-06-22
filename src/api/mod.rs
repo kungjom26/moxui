@@ -42,7 +42,8 @@ pub fn router(state: AppState) -> Router {
         .route("/readyz", get(health::readyz))
         .route("/api/v1/auth/login", post(auth::login))
         .route("/api/v1/auth/refresh", post(auth::refresh))
-        .route("/api/v1/auth/logout", post(auth::logout));
+        .route("/api/v1/auth/logout", post(auth::logout))
+        .route("/api/v1/auth/2fa/complete", post(auth::two_factor_complete));
 
     // Authenticated routes — require a valid Bearer token.
     let protected = Router::new()
@@ -73,6 +74,9 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/tasks/:cluster/:node/:upid",
             get(tasks::task_status),
         )
+        .route("/api/v1/auth/2fa/setup", post(auth::two_factor_setup))
+        .route("/api/v1/auth/2fa/verify", post(auth::two_factor_verify))
+        .route("/api/v1/auth/2fa/disable", post(auth::two_factor_disable))
         .route(
             "/api/v1/vms/:cluster/:node/:vmid/vnc/ticket",
             post(vnc::vnc_ticket_handler),

@@ -16,6 +16,7 @@ pub mod jwt;
 pub mod middleware;
 pub mod password;
 pub mod refresh;
+pub mod totp;
 pub mod user;
 pub mod vnc;
 
@@ -23,4 +24,5 @@ pub use jwt::{Claims, JwtService};
 pub use middleware::{require_auth, require_role, AuthContext};
 pub use password::{hash_password, verify_password};
 pub use refresh::RefreshStore;
+pub use totp::PreAuthStore;
 pub use user::{Role, User, UserStore};

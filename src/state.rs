@@ -10,7 +10,7 @@ use secrecy::SecretBox;
 use tokio::sync::{Mutex, RwLock};
 
 use crate::audit::AuditStore;
-use crate::auth::{JwtService, RefreshStore, UserStore};
+use crate::auth::{JwtService, PreAuthStore, RefreshStore, UserStore};
 use crate::config::Config;
 use crate::proxmox::ProxmoxClient;
 
@@ -69,6 +69,8 @@ pub struct AppState {
     pub users: Arc<UserStore>,
     /// Thread-safe refresh token store.
     pub refresh_store: Arc<RefreshStore>,
+    /// Pre-auth (2FA pending) session store.
+    pub preauth: Arc<PreAuthStore>,
     /// HMAC secret used to mint + verify short-lived VNC tokens.
     /// `None` when VNC is disabled (operator opted out by not setting
     /// `auth.vnc_token_secret_pem_path` in the config); the VNC
@@ -105,6 +107,7 @@ impl AppState {
             jwt: Arc::new(jwt),
             users: Arc::new(users),
             refresh_store: Arc::new(RefreshStore::new()),
+            preauth: Arc::new(PreAuthStore::new()),
             vnc_secret: vnc_secret.map(Arc::new),
             vnc_limiters: Arc::new(Mutex::new(HashMap::new())),
         }
