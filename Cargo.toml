@@ -95,7 +95,7 @@ tokio-tungstenite = "0.21"
 futures-util = "0.3"
 
 # Rate limiting
-tower_governor = "0.8"
+governor = "0.10"
 axum-server = { version = "0.7.2", default-features = false, features = ["tls-rustls"] }
 tokio-rustls = "0.26.4"
 

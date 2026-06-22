@@ -17,6 +17,7 @@ use axum::{
 };
 
 use crate::auth::require_auth;
+use crate::security::{cors_layer, RateLimitLayer};
 use crate::state::AppState;
 
 /// Build the main API router with auth + audit middleware applied.
@@ -96,6 +97,8 @@ pub fn router(state: AppState) -> Router {
             state.clone(),
             crate::audit::audit_middleware,
         ))
+        .layer(RateLimitLayer::new(&state.config.auth.rate_limit))
+        .layer(cors_layer(&state.config.auth.cors))
         .layer(axum::middleware::from_fn(security_headers_middleware))
         .with_state(state)
 }

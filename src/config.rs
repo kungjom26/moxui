@@ -143,6 +143,73 @@ pub struct AuthConfig {
     /// Path is read at startup; secret lives in process memory only.
     #[serde(default)]
     pub vnc_token_secret_pem_path: Option<String>,
+    /// Rate limiting configuration (tower-governor).
+    #[serde(default)]
+    pub rate_limit: RateLimitConfig,
+    /// CORS configuration (tower-http cors).
+    #[serde(default)]
+    pub cors: CorsConfig,
+    /// API key-based authentication (alternative to JWT).
+    #[serde(default)]
+    pub api_key: ApiKeyConfig,
+}
+
+/// Rate limiting configuration (tower-governor).
+#[derive(Debug, Clone, Deserialize)]
+pub struct RateLimitConfig {
+    /// Maximum requests per second per IP.
+    #[serde(default = "default_rate_per_sec")]
+    pub requests_per_second: u64,
+    /// Burst size — peak requests allowed before rate limiting kicks in.
+    #[serde(default = "default_rate_burst")]
+    pub burst_size: u32,
+}
+
+fn default_rate_per_sec() -> u64 { 5 }
+fn default_rate_burst() -> u32 { 10 }
+
+impl Default for RateLimitConfig {
+    fn default() -> Self {
+        Self {
+            requests_per_second: 5,
+            burst_size: 10,
+        }
+    }
+}
+
+/// CORS configuration.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CorsConfig {
+    /// Allowed origins (e.g. `https://moxui.example.com`).
+    /// Empty = allow all origins (development).
+    #[serde(default)]
+    pub allowed_origins: Vec<String>,
+    /// Max age for preflight cache in seconds (default 86400 = 24h).
+    #[serde(default = "default_cors_max_age")]
+    pub max_age_secs: u64,
+}
+
+fn default_cors_max_age() -> u64 { 86400 }
+
+impl Default for CorsConfig {
+    fn default() -> Self {
+        Self {
+            allowed_origins: vec![],
+            max_age_secs: 86400,
+        }
+    }
+}
+
+/// API key authentication configuration.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ApiKeyConfig {
+    /// Enable API key authentication.
+    #[serde(default)]
+    pub enabled: bool,
+    /// The API key value (shared secret). Set via config file or
+    /// `MOXUI_AUTH__API_KEY__KEY` env var.
+    #[serde(default)]
+    pub key: Option<String>,
 }
 
 fn default_jwt_issuer() -> String {
