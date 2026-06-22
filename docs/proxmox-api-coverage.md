@@ -30,16 +30,16 @@
 | `POST` | `/nodes/{node}/qemu/{vmid}/status/stop` | ✅ | Stop VM |
 | `POST` | `/nodes/{node}/qemu/{vmid}/status/shutdown` | ✅ | Shutdown VM (ACPI) |
 | `POST` | `/nodes/{node}/qemu/{vmid}/status/reboot` | ✅ | Reboot VM |
-| `POST` | `/nodes/{node}/qemu/{vmid}/status/reset` | ❌ | Planned for Phase 3 |
-| `POST` | `/nodes/{node}/qemu/{vmid}/status/suspend` | ❌ | Planned for Phase 3 |
-| `POST` | `/nodes/{node}/qemu/{vmid}/status/resume` | ❌ | Planned for Phase 3 |
+| `POST` | `/nodes/{node}/qemu/{vmid}/status/reset` | ❌ | Planned for v1.1 |
+| `POST` | `/nodes/{node}/qemu/{vmid}/status/suspend` | ❌ | Planned for v1.1 |
+| `POST` | `/nodes/{node}/qemu/{vmid}/status/resume` | ❌ | Planned for v1.1 |
 | `DELETE` | `/nodes/{node}/qemu/{vmid}` | ✅ | Delete VM (with purge/force/skiplock options) |
 | `PUT` | `/nodes/{node}/qemu` | ❌ | VM creation — planned for v1.1 |
 | `POST` | `/nodes/{node}/qemu` | ❌ | VM cloning — planned for v1.1 |
 | `POST` | `/nodes/{node}/qemu/{vmid}/migrate` | ❌ | Migration — planned for v1.1 |
 | `POST` | `/nodes/{node}/qemu/{vmid}/template` | ❌ | Convert to template — planned for v1.1 |
 | `POST` | `/nodes/{node}/qemu/{vmid}/snapshot` | ❌ | Snapshot — planned for v1.1 |
-| `POST` | `/nodes/{node}/qemu/{vmid}/sendkey` | ❌ | Planned for Phase 3 |
+| `POST` | `/nodes/{node}/qemu/{vmid}/sendkey` | ❌ | Planned for v1.1 |
 | `POST` | `/nodes/{node}/qemu/{vmid}/monitor` | ❌ | QEMU monitor access — not planned |
 | `POST` | `/nodes/{node}/qemu/{vmid}/vncproxy` | ✅ | VNC console proxy (ticket-based) |
 | `GET` | `/nodes/{node}/qemu/{vmid}/vncwebsocket` | 🚧 | WebSocket proxy (Phase 2 follow-up) |
@@ -55,11 +55,11 @@
 | `GET` | `/cluster/resources?type=lxc` | ✅ | Cross-cluster LXC list |
 | `GET` | `/nodes/{node}/lxc` | ✅ | Via cluster resources |
 | `GET` | `/nodes/{node}/lxc/{vmid}/status/current` | ✅ | Single LXC detail |
-| `POST` | `/nodes/{node}/lxc/{vmid}/status/start` | 🚧 | Planned for Phase 3 |
-| `POST` | `/nodes/{node}/lxc/{vmid}/status/stop` | 🚧 | Planned for Phase 3 |
-| `POST` | `/nodes/{node}/lxc/{vmid}/status/shutdown` | 🚧 | Planned for Phase 3 |
-| `POST` | `/nodes/{node}/lxc/{vmid}/status/reboot` | 🚧 | Planned for Phase 3 |
-| `DELETE` | `/nodes/{node}/lxc/{vmid}` | 🚧 | Planned for Phase 3 |
+| `POST` | `/nodes/{node}/lxc/{vmid}/status/start` | 🚧 | Planned for v1.1 |
+| `POST` | `/nodes/{node}/lxc/{vmid}/status/stop` | 🚧 | Planned for v1.1 |
+| `POST` | `/nodes/{node}/lxc/{vmid}/status/shutdown` | 🚧 | Planned for v1.1 |
+| `POST` | `/nodes/{node}/lxc/{vmid}/status/reboot` | 🚧 | Planned for v1.1 |
+| `DELETE` | `/nodes/{node}/lxc/{vmid}` | 🚧 | Planned for v1.1 |
 | `PUT` | `/nodes/{node}/lxc` | ❌ | LXC creation — planned for v1.1 |
 | `PUT` | `/nodes/{node}/lxc/{vmid}/config` | ❌ | LXC config update — planned for v1.1 |
 
