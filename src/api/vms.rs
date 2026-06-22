@@ -708,6 +708,7 @@ mod list_vms_contract_tests {
             tracing: crate::observability::tracing::TracingConfig::default(),
             data_dir: "/tmp/moxui-test".to_string(),
             webhook: crate::config::WebhookConfig::default(),
+            plugins: vec![],
         };
         let priv_pem = include_bytes!("../../tests/fixtures/test_jwt_priv.pem");
         let pub_pem = include_bytes!("../../tests/fixtures/test_jwt_pub.pem");
@@ -724,6 +725,7 @@ mod list_vms_contract_tests {
             None,
             None,
             Arc::new(crate::dashboard_custom::DashboardCustomService::new_in_memory()),
+            crate::plugin::PluginRegistry::new(),
         );
         let app = crate::api::router(state);
         (server, app)
@@ -964,6 +966,7 @@ mod vm_config_contract_tests {
             tracing: crate::observability::tracing::TracingConfig::default(),
             data_dir: "/tmp/moxui-test".to_string(),
             webhook: crate::config::WebhookConfig::default(),
+            plugins: vec![],
         };
         let priv_pem = include_bytes!("../../tests/fixtures/test_jwt_priv.pem");
         let pub_pem = include_bytes!("../../tests/fixtures/test_jwt_pub.pem");
@@ -980,6 +983,7 @@ mod vm_config_contract_tests {
             None,
             None,
             Arc::new(crate::dashboard_custom::DashboardCustomService::new_in_memory()),
+            crate::plugin::PluginRegistry::new(),
         );
         let app = crate::api::router(state);
         (server, app)

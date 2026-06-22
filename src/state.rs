@@ -101,6 +101,8 @@ pub struct AppState {
     pub webhook: Option<Arc<WebhookService>>,
     /// Custom per-user dashboard service.
     pub dashboard_custom: Arc<DashboardCustomService>,
+    /// Plugin registry for hook-based extensions.
+    pub plugins: Arc<crate::plugin::PluginRegistry>,
 }
 
 impl AppState {
@@ -121,6 +123,7 @@ impl AppState {
         metrics: Option<MetricsService>,
         webhook: Option<Arc<WebhookService>>,
         dashboard_custom: Arc<DashboardCustomService>,
+        plugins: crate::plugin::PluginRegistry,
     ) -> Self {
         Self {
             config: Arc::new(config),
@@ -139,6 +142,7 @@ impl AppState {
             metrics,
             webhook,
             dashboard_custom,
+            plugins: Arc::new(plugins),
         }
     }
 
@@ -263,6 +267,7 @@ mod tests {
             auth: crate::config::AuthConfig::default(),
             tracing: crate::observability::tracing::TracingConfig::default(),
             webhook: crate::config::WebhookConfig::default(),
+            plugins: vec![],
             data_dir: "/tmp/moxui-test".to_string(),
         }
     }
@@ -290,6 +295,7 @@ mod tests {
             None,
             None,
             dash_svc,
+            crate::plugin::PluginRegistry::new(),
         );
         assert_eq!(state.config.server.bind, "0.0.0.0:8080");
         assert_eq!(state.clients.len(), 0);
@@ -334,6 +340,7 @@ mod tests {
             None,
             None,
             dash_svc,
+            crate::plugin::PluginRegistry::new(),
         );
 
         assert_eq!(state.clients.len(), 2);
@@ -359,6 +366,7 @@ mod tests {
             None,
             None,
             dash_svc,
+            crate::plugin::PluginRegistry::new(),
         );
         let snap = state.readiness().await;
         assert!(snap.all_healthy(), "empty cluster list should be ready");

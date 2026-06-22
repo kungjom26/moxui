@@ -152,7 +152,7 @@ function moxui() {
         migrateError: null,
         availableNodes: [],        // cached node list for the current cluster
 
-        // --- Custom Dashboard state (Phase 4) ---
+        // ----- Custom Dashboard state (Phase 4) -----
         customDashboard: null,     // CustomDashboardConfig from /api/v1/dashboard/custom
         customDashboardError: null,
         customDashboardLoading: false,
@@ -161,6 +161,39 @@ function moxui() {
         showWidgetEditor: false,
         dashboardSaving: false,
         dashboardSaved: false,
+
+        // ----- Setup Wizard state -----
+        showWizard: false,
+        wizardStep: 0,
+        wizardApplying: false,
+        wizardApplyError: null,
+        wizardProxmoxTesting: false,
+        wizardProxmoxStatus: null, // null | 'ok' | 'err'
+        wizardProxmoxError: null,
+        wizardChecks: [],          // [{ label, pass, detail }]
+        wizardForm: {
+            proxmox_host: '',
+            proxmox_port: 8006,
+            proxmox_user: 'root@pam',
+            proxmox_password: '',
+            proxmox_verify_tls: true,
+            admin_username: 'admin',
+            admin_password: '',
+            admin_password_confirm: '',
+            admin_email: '',
+            feature_2fa: true,
+            feature_oidc: false,
+            feature_webauthn: true,
+            feature_webhooks: false,
+        },
+        wizardSteps: [
+            { label: 'Welcome' },
+            { label: 'Proxmox' },
+            { label: 'Admin User' },
+            { label: 'Features' },
+            { label: 'Summary' },
+            { label: 'Done' },
+        ],
 
         // ----- lifecycle -----
 
@@ -192,6 +225,11 @@ function moxui() {
                     // Token expired or invalid.
                     this.logout();
                 }
+            }
+
+            // Check if first-run setup wizard should be shown
+            if (!this.token) {
+                await this.checkSetupWizard();
             }
 
             window.addEventListener('hashchange', () => {
@@ -1243,6 +1281,144 @@ function moxui() {
             if (d) return `${d}d ${h}h`;
             if (h) return `${h}h ${m}m`;
             return `${m}m`;
+        },
+
+        // ----- Setup Wizard -----
+
+        get wizardNextDisabled() {
+            switch (this.wizardStep) {
+                case 0: return false;
+                case 1: return !this.wizardForm.proxmox_host || !this.wizardForm.proxmox_port || !this.wizardForm.proxmox_user || !this.wizardForm.proxmox_password;
+                case 2: return !this.wizardForm.admin_username || !this.wizardForm.admin_password || this.wizardForm.admin_password !== this.wizardForm.admin_password_confirm;
+                case 3: return false;
+                default: return false;
+            }
+        },
+
+        async checkSetupWizard() {
+            try {
+                const resp = await fetch('/api/v1/setup/status');
+                if (!resp.ok) return;
+                const data = await resp.json();
+                // Show wizard when no Proxmox cluster is configured
+                if (data.needs_setup) {
+                    this.showWizard = true;
+                    this.runSystemChecks();
+                }
+            } catch (_) {
+                // Backend doesn't have setup endpoint yet — hide wizard
+                this.showWizard = false;
+            }
+        },
+
+        async runSystemChecks() {
+            this.wizardChecks = [
+                { label: 'Browser support', pass: true, detail: 'Modern browser detected' },
+                { label: 'LocalStorage', pass: typeof localStorage !== 'undefined', detail: '' },
+                { label: 'Fetch API', pass: typeof fetch !== 'undefined', detail: '' },
+                { label: 'WebAuthn', pass: typeof navigator?.credentials?.create === 'function', detail: '' },
+                { label: 'WebSocket', pass: typeof WebSocket !== 'undefined', detail: '' },
+                { label: 'Crypto Subtle', pass: typeof crypto?.subtle !== 'undefined', detail: '' },
+            ];
+        },
+
+        nextWizardStep() {
+            if (this.wizardNextDisabled) return;
+            if (this.wizardStep < this.wizardSteps.length - 1) {
+                this.wizardStep++;
+            }
+        },
+
+        prevWizardStep() {
+            if (this.wizardStep > 0) {
+                this.wizardStep--;
+            }
+        },
+
+        async testProxmoxConnection() {
+            this.wizardProxmoxTesting = true;
+            this.wizardProxmoxStatus = null;
+            this.wizardProxmoxError = null;
+            try {
+                const resp = await fetch('/api/v1/setup/test-proxmox', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        host: this.wizardForm.proxmox_host,
+                        port: this.wizardForm.proxmox_port,
+                        user: this.wizardForm.proxmox_user,
+                        password: this.wizardForm.proxmox_password,
+                        verify_tls: this.wizardForm.proxmox_verify_tls,
+                    }),
+                });
+                const data = await resp.json();
+                if (resp.ok && data.ok) {
+                    this.wizardProxmoxStatus = 'ok';
+                } else {
+                    this.wizardProxmoxStatus = 'err';
+                    this.wizardProxmoxError = data.error || data.message || 'Connection failed';
+                }
+            } catch (e) {
+                this.wizardProxmoxStatus = 'err';
+                this.wizardProxmoxError = e.message || String(e);
+            } finally {
+                this.wizardProxmoxTesting = false;
+            }
+        },
+
+        async applyWizardConfig() {
+            this.wizardApplying = true;
+            this.wizardApplyError = null;
+            try {
+                const payload = {
+                    proxmox: {
+                        host: this.wizardForm.proxmox_host,
+                        port: this.wizardForm.proxmox_port,
+                        user: this.wizardForm.proxmox_user,
+                        password: this.wizardForm.proxmox_password,
+                        verify_tls: this.wizardForm.proxmox_verify_tls,
+                    },
+                    admin: {
+                        username: this.wizardForm.admin_username,
+                        password: this.wizardForm.admin_password,
+                        email: this.wizardForm.admin_email || undefined,
+                    },
+                    features: {
+                        totp_2fa: this.wizardForm.feature_2fa,
+                        oidc: this.wizardForm.feature_oidc,
+                        webauthn: this.wizardForm.feature_webauthn,
+                        webhooks: this.wizardForm.feature_webhooks,
+                    },
+                };
+
+                const resp = await fetch('/api/v1/setup/apply', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    throw new Error(err.message || err.error || `Setup failed (${resp.status})`);
+                }
+
+                // Move to the "Done" step
+                this.wizardStep = 5;
+
+                // Auto-login with the new admin credentials and redirect to dashboard
+                setTimeout(() => {
+                    this.loginForm = {
+                        username: this.wizardForm.admin_username,
+                        password: this.wizardForm.admin_password,
+                    };
+                    this.showWizard = false;
+                    this.login();
+                }, 2000);
+            } catch (e) {
+                this.wizardApplyError = e.message || String(e);
+            } finally {
+                this.wizardApplying = false;
+            }
         },
     };
 }

@@ -189,9 +189,12 @@ mod tests {
             tracing: crate::observability::tracing::TracingConfig::default(),
             data_dir: "/var/lib/moxui".to_string(),
             webhook: crate::config::WebhookConfig::default(),
+            plugins: vec![],
         };
 
-        AppState::new(cfg, vec![], audit, jwt, UserStore::new(), None, None, None, None, None, Arc::new(crate::dashboard_custom::DashboardCustomService::new_in_memory()))
+        AppState::new(cfg, vec![], audit, jwt, UserStore::new(), None, None, None, None, None, Arc::new(crate::dashboard_custom::DashboardCustomService::new_in_memory()),
+            crate::plugin::PluginRegistry::new(),
+        )
     }
 
     fn seed_entries(store: &AuditStore, count: usize) {

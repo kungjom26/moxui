@@ -7,6 +7,7 @@ pub mod hagroups;
 pub mod health;
 pub mod lxcs;
 pub mod networks;
+pub mod replication;
 pub mod storages;
 pub mod tasks;
 pub mod vms;
@@ -15,7 +16,7 @@ pub mod webauthn;
 
 use axum::{
     middleware::from_fn_with_state,
-    routing::{get, post},
+    routing::{delete, get, post},
     Router,
 };
 
@@ -80,6 +81,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/networks", get(networks::list_networks))
         .route("/api/v1/hagroups", get(hagroups::list_ha_groups))
         .route("/api/v1/hagroups/:cluster/:group", post(hagroups::create_ha_group).delete(hagroups::delete_ha_group))
+        .route("/api/v1/replication", get(replication::list_replication_jobs))
         .route("/api/v1/auth/2fa/setup", post(auth::two_factor_setup))
         .route("/api/v1/auth/2fa/verify", post(auth::two_factor_verify))
         .route("/api/v1/auth/2fa/disable", post(auth::two_factor_disable))
@@ -132,6 +134,18 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v1/vms/:cluster/:node/:vmid/vnc/ws",
             get(vnc::vnc_ws_handler),
+        )
+        .route(
+            "/api/v1/replication/:cluster/:vmid",
+            post(replication::create_replication_job),
+        )
+        .route(
+            "/api/v1/replication/:cluster/:vmid/delete",
+            delete(replication::delete_replication_job),
+        )
+        .route(
+            "/api/v1/replication/:cluster/:vmid/status",
+            get(replication::get_replication_status),
         )
         // require_auth runs first (inner), require_cluster_access runs second (outer).
         .route_layer(from_fn_with_state(state.clone(), require_cluster_access))

@@ -216,6 +216,11 @@ async fn main() -> ExitCode {
         svc => std::sync::Arc::new(svc),
     };
 
+    // Initialize plugin registry from config
+    let plugins = moxui::plugin::build_plugin_registry(
+        &config.plugins,
+    );
+
     // Create application state
     let state = AppState::new(
         config.clone(),
@@ -229,7 +234,11 @@ async fn main() -> ExitCode {
         Some(metrics.clone()),
         webhook.clone(),
         dashboard_custom,
+        plugins,
     );
+
+    // Notify plugins that the application has started
+    state.plugins.dispatch_startup(&state).await;
 
     // Build router — API + UI are merged inside `api::router` so the
     // security-headers layer covers both with a single application.

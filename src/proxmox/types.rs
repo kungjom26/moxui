@@ -403,6 +403,112 @@ pub struct NodeNetwork {
     pub comments: Option<String>,
 }
 
+/// A replication job from Proxmox `/cluster/replication`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplicationJob {
+    /// Replication job ID.
+    pub id: u64,
+    /// Whether the job is enabled.
+    #[serde(default)]
+    pub enable: Option<u8>,
+    /// Source node.
+    #[serde(default)]
+    pub source_node: Option<String>,
+    /// Source VM ID.
+    #[serde(default)]
+    pub source_vmid: Option<u32>,
+    /// Target node (Proxmox remote target identifier).
+    #[serde(default)]
+    pub target: Option<String>,
+    /// Target VM ID.
+    #[serde(default)]
+    pub target_vmid: Option<u32>,
+    /// Replication rate limit in MB/s (0 = unlimited).
+    #[serde(default)]
+    pub rate: Option<u32>,
+    /// Replication schedule in standard cron format.
+    #[serde(default)]
+    pub schedule: Option<String>,
+    /// Free-form comment.
+    #[serde(default)]
+    pub comment: Option<String>,
+    /// Job type (e.g. `local`, `remote`).
+    #[serde(rename = "type", default)]
+    pub kind: Option<String>,
+}
+
+/// Replication job status (from `/cluster/replication/{id}/log` or status endpoint).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplicationStatus {
+    /// Replication job ID.
+    pub id: u64,
+    /// Current state (e.g. `running`, `stopped`, `error`, `pending`).
+    #[serde(default)]
+    pub state: Option<String>,
+    /// Timestamp of last successful sync (Unix seconds).
+    #[serde(default)]
+    pub last_sync: Option<u64>,
+    /// Timestamp of last attempt (Unix seconds).
+    #[serde(default)]
+    pub last_try: Option<u64>,
+    /// Duration of last run in seconds.
+    #[serde(default)]
+    pub duration: Option<u64>,
+    /// Error message if last run failed.
+    #[serde(default)]
+    pub error: Option<String>,
+    /// Total bytes replicated.
+    #[serde(default)]
+    pub bytes: Option<u64>,
+}
+
+/// Request body for creating a replication job.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateReplicationJob {
+    /// Source VM ID.
+    pub source_vmid: u32,
+    /// Source node.
+    #[serde(default)]
+    pub source_node: Option<String>,
+    /// Target node/remote identifier.
+    pub target: String,
+    /// Target VM ID (defaults to source_vmid if not set).
+    #[serde(default)]
+    pub target_vmid: Option<u32>,
+    /// Replication rate limit in MB/s.
+    #[serde(default)]
+    pub rate: Option<u32>,
+    /// Schedule in cron format.
+    pub schedule: String,
+    /// Free-form comment.
+    #[serde(default)]
+    pub comment: Option<String>,
+    /// Enable immediately.
+    #[serde(default = "default_enable")]
+    pub enable: bool,
+}
+
+fn default_enable() -> bool {
+    true
+}
+
+/// Request body for updating an existing replication job.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UpdateReplicationJob {
+    /// Whether the job is enabled.
+    #[serde(default)]
+    pub enable: Option<bool>,
+    /// Replication rate limit in MB/s.
+    #[serde(default)]
+    pub rate: Option<u32>,
+    /// Schedule in cron format.
+    #[serde(default)]
+    pub schedule: Option<String>,
+    /// Free-form comment.
+    #[serde(default)]
+    pub comment: Option<String>,
+}
+
 /// Proxmox HA group (from `/cluster/ha/groups`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HaGroup {

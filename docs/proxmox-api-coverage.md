@@ -109,7 +109,12 @@
 | `GET` | `/cluster/config` | ❌ | Cluster config — planned for v1.1 |
 | `GET` | `/cluster/ha/status` | ❌ | HA resources — planned for v1.1 |
 | `GET` | `/cluster/ha/groups` | ❌ | HA groups — planned for v1.1 |
-| `GET` | `/cluster/replication` | ❌ | Replication — planned for v1.1 |
+| `GET` | `/cluster/replication` | ✅ | Replication — read list of replication jobs |
+| `POST` | `/cluster/replication` | 🚧 | Replication — create a new replication job |
+| `PUT` | `/cluster/replication/{id}` | 🚧 | Replication — update existing job |
+| `DELETE` | `/cluster/replication/{id}` | 🚧 | Replication — delete a replication job |
+| `POST` | `/cluster/replication/{id}/schedule_now` | 🚧 | Replication — trigger immediate replication |
+| `GET` | `/cluster/replication/{id}/log` | 🚧 | Replication — fetch job log |
 | `GET` | `/cluster/options` | ❌ | Cluster options — planned for v1.1 |
 | `GET` | `/cluster/firewall` | ❌ | Firewall rules — planned for v1.1 |
 | `GET` | `/cluster/log` | ❌ | Cluster log — planned for v1.1 |

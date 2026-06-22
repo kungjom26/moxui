@@ -738,6 +738,100 @@ impl ProxmoxClient {
         let params = vec![("force".to_string(), "1".to_string())];
         self.post_with_query(&path, params).await
     }
+
+    // ── Replication Job Management ────────────────────────────────────────
+
+    /// List all replication jobs configured on this cluster.
+    ///
+    /// Proxmox endpoint: `GET /cluster/replication`
+    pub async fn list_replication_jobs(
+        &self,
+    ) -> AppResult<Vec<crate::proxmox::types::ReplicationJob>> {
+        self.get("cluster/replication").await
+    }
+
+    /// Create a new replication job.
+    ///
+    /// Proxmox endpoint: `POST /cluster/replication` with query params.
+    /// Returns the replication job ID as a string.
+    pub async fn create_replication_job(
+        &self,
+        job: &crate::proxmox::types::CreateReplicationJob,
+    ) -> AppResult<String> {
+        let mut params = vec![
+            ("source-vmid".to_string(), job.source_vmid.to_string()),
+            ("target".to_string(), job.target.clone()),
+            ("schedule".to_string(), job.schedule.clone()),
+            (
+                "enable".to_string(),
+                if job.enable { "1" } else { "0" }.to_string(),
+            ),
+        ];
+        if let Some(ref node) = job.source_node {
+            params.push(("source-node".to_string(), node.clone()));
+        }
+        if let Some(tvmid) = job.target_vmid {
+            params.push(("target-vmid".to_string(), tvmid.to_string()));
+        }
+        if let Some(rate) = job.rate {
+            params.push(("rate".to_string(), rate.to_string()));
+        }
+        if let Some(ref comment) = job.comment {
+            params.push(("comment".to_string(), comment.clone()));
+        }
+        self.post_with_query("cluster/replication", params).await
+    }
+
+    /// Update an existing replication job.
+    ///
+    /// Proxmox endpoint: `PUT /cluster/replication/{id}` with query params.
+    /// Since the client uses POST for all state-changing operations, we
+    /// POST to the same path — Proxmox accepts POST for write operations.
+    pub async fn update_replication_job(
+        &self,
+        id: u64,
+        job: &crate::proxmox::types::UpdateReplicationJob,
+    ) -> AppResult<String> {
+        let path = format!("cluster/replication/{id}");
+        let mut params = Vec::new();
+        if let Some(enable) = job.enable {
+            params.push((
+                "enable".to_string(),
+                if enable { "1" } else { "0" }.to_string(),
+            ));
+        }
+        if let Some(rate) = job.rate {
+            params.push(("rate".to_string(), rate.to_string()));
+        }
+        if let Some(ref schedule) = job.schedule {
+            params.push(("schedule".to_string(), schedule.clone()));
+        }
+        if let Some(ref comment) = job.comment {
+            params.push(("comment".to_string(), comment.clone()));
+        }
+        self.post_with_query(&path, params).await
+    }
+
+    /// Delete a replication job.
+    ///
+    /// Proxmox endpoint: `DELETE /cluster/replication/{id}`.
+    /// Proxmox accepts POST for deletes; we use post_with_query.
+    pub async fn delete_replication_job(&self, id: u64) -> AppResult<String> {
+        let path = format!("cluster/replication/{id}");
+        let params: Vec<(String, String)> = Vec::new();
+        self.post_with_query(&path, params).await
+    }
+
+    /// Get the replication status / log for a job.
+    ///
+    /// Proxmox endpoint: `GET /cluster/replication/{id}/log`
+    pub async fn get_replication_status(
+        &self,
+        id: u64,
+    ) -> AppResult<Vec<crate::proxmox::types::ReplicationStatus>> {
+        let path = format!("cluster/replication/{id}/log");
+        self.get(&path).await
+    }
 }
 
 #[cfg(test)]
@@ -1308,6 +1402,7 @@ mod vm_action_integration_tests {
             tracing: crate::observability::tracing::TracingConfig::default(),
             data_dir: "/var/lib/moxui".to_string(),
             webhook: crate::config::WebhookConfig::default(),
+            plugins: vec!["audit_logger".to_string()],
         };
         let priv_pem = include_bytes!("../../tests/fixtures/test_jwt_priv.pem");
         let pub_pem = include_bytes!("../../tests/fixtures/test_jwt_pub.pem");
@@ -1324,6 +1419,7 @@ mod vm_action_integration_tests {
             None,
             None,
             Arc::new(crate::dashboard_custom::DashboardCustomService::new_in_memory()),
+            crate::plugin::PluginRegistry::new(),
         );
         (server, state, audit)
     }
@@ -1768,6 +1864,7 @@ mod vm_action_integration_tests {
             tracing: crate::observability::tracing::TracingConfig::default(),
             data_dir: "/var/lib/moxui".to_string(),
             webhook: crate::config::WebhookConfig::default(),
+            plugins: vec!["audit_logger".to_string()],
         };
         let priv_pem = include_bytes!("../../tests/fixtures/test_jwt_priv.pem");
         let pub_pem = include_bytes!("../../tests/fixtures/test_jwt_pub.pem");
@@ -1799,7 +1896,9 @@ mod vm_action_integration_tests {
             u
         };
         let users = crate::auth::UserStore::with_users(vec![admin, operator, viewer, disabled]);
-        let state = AppState::new(cfg, vec![], audit.clone(), jwt, users, None, None, None, None, None, Arc::new(crate::dashboard_custom::DashboardCustomService::new_in_memory()));
+        let state = AppState::new(cfg, vec![], audit.clone(), jwt, users, None, None, None, None, None, Arc::new(crate::dashboard_custom::DashboardCustomService::new_in_memory()),
+            crate::plugin::PluginRegistry::new(),
+        );
         (state, audit)
     }
 
@@ -2329,6 +2428,7 @@ mod vm_action_integration_tests {
             tracing: crate::observability::tracing::TracingConfig::default(),
             data_dir: "/var/lib/moxui".to_string(),
             webhook: crate::config::WebhookConfig::default(),
+            plugins: vec!["audit_logger".to_string()],
         };
         let priv_pem = include_bytes!("../../tests/fixtures/test_jwt_priv.pem");
         let pub_pem = include_bytes!("../../tests/fixtures/test_jwt_pub.pem");
@@ -2354,6 +2454,7 @@ mod vm_action_integration_tests {
             None,
             None,
             Arc::new(crate::dashboard_custom::DashboardCustomService::new_in_memory()),
+            crate::plugin::PluginRegistry::new(),
         );
         let app = crate::api::router(state);
 

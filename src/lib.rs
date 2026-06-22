@@ -24,6 +24,7 @@ pub mod dashboard_custom;
 pub mod db;
 pub mod error;
 pub mod observability;
+pub mod plugin;
 pub mod proxmox;
 pub mod security;
 pub mod state;

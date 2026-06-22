@@ -755,6 +755,161 @@
         </section>
     </main>
 
+    <!-- Wizard — shown on first-launch setup or #/wizard route. -->
+    <main x-show="showWizard" x-cloak class="wizard">
+        <div class="card wizard-card">
+            <!-- Step progress indicator -->
+            <div class="wizard-steps">
+                <template x-for="(s, i) in wizardSteps" :key="i">
+                    <div class="wizard-step" :class="{ active: wizardStep === i, done: wizardStep > i }">
+                        <span class="wizard-step-num" x-text="i + 1"></span>
+                        <span class="wizard-step-label" x-text="s.label"></span>
+                    </div>
+                </template>
+            </div>
+
+            <hr class="wizard-divider" />
+
+            <!-- Step 0: Welcome + System Requirements -->
+            <div x-show="wizardStep === 0">
+                <h2>🎉 Welcome to MoxUI</h2>
+                <p>Thank you for installing MoxUI! Let's get your Proxmox management dashboard set up in a few quick steps.</p>
+                <div class="wizard-checks">
+                    <template x-for="chk in wizardChecks" :key="chk.label">
+                        <div class="wizard-check" :class="{ pass: chk.pass, fail: !chk.pass }">
+                            <span x-text="chk.pass ? '✅' : '❌'"></span>
+                            <span x-text="chk.label"></span>
+                            <span class="muted" x-text="chk.detail"></span>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+            <!-- Step 1: Proxmox Cluster Connection -->
+            <div x-show="wizardStep === 1">
+                <h2>🔗 Connect Proxmox Cluster</h2>
+                <p>Enter the details of your Proxmox cluster to connect via the MoxUI proxy.</p>
+                <div class="wizard-form">
+                    <label>
+                        <span>Host</span>
+                        <input x-model="wizardForm.proxmox_host" type="text" placeholder="proxmox.example.com" />
+                    </label>
+                    <label>
+                        <span>Port</span>
+                        <input x-model="wizardForm.proxmox_port" type="number" placeholder="8006" />
+                    </label>
+                    <label>
+                        <span>Username (realm required)</span>
+                        <input x-model="wizardForm.proxmox_user" type="text" placeholder="root@pam" />
+                    </label>
+                    <label>
+                        <span>Password</span>
+                        <input x-model="wizardForm.proxmox_password" type="password" />
+                    </label>
+                    <label class="checkbox">
+                        <input x-model="wizardForm.proxmox_verify_tls" type="checkbox" />
+                        <span>Verify TLS certificate</span>
+                    </label>
+                    <p class="wizard-connection-status" x-show="wizardForm.proxmox_host">
+                        <span x-show="wizardProxmoxTesting" class="muted">Testing connection…</span>
+                        <span x-show="wizardProxmoxStatus === 'ok'" class="ok">✅ Connection successful</span>
+                        <span x-show="wizardProxmoxStatus === 'err'" class="error" x-text="'❌ ' + wizardProxmoxError"></span>
+                        <button class="link" @click="testProxmoxConnection()" x-show="wizardForm.proxmox_host && !wizardProxmoxTesting">🔄 Test connection</button>
+                    </p>
+                </div>
+            </div>
+
+            <!-- Step 2: Admin User Creation -->
+            <div x-show="wizardStep === 2">
+                <h2>👤 Create Admin User</h2>
+                <p>Set up the initial administrator account for MoxUI.</p>
+                <div class="wizard-form">
+                    <label>
+                        <span>Username</span>
+                        <input x-model="wizardForm.admin_username" type="text" placeholder="admin" />
+                    </label>
+                    <label>
+                        <span>Password</span>
+                        <input x-model="wizardForm.admin_password" type="password" />
+                    </label>
+                    <label>
+                        <span>Confirm Password</span>
+                        <input x-model="wizardForm.admin_password_confirm" type="password" />
+                    </label>
+                    <label>
+                        <span>Email (optional)</span>
+                        <input x-model="wizardForm.admin_email" type="email" placeholder="admin@example.com" />
+                    </label>
+                </div>
+            </div>
+
+            <!-- Step 3: Feature Selection -->
+            <div x-show="wizardStep === 3">
+                <h2>⚙️ Feature Selection</h2>
+                <p>Choose which optional features to enable.</p>
+                <div class="wizard-features">
+                    <label class="checkbox">
+                        <input x-model="wizardForm.feature_2fa" type="checkbox" checked />
+                        <span><strong>Two-Factor Authentication (2FA)</strong> <span class="muted">— TOTP-based login security</span></span>
+                    </label>
+                    <label class="checkbox">
+                        <input x-model="wizardForm.feature_oidc" type="checkbox" />
+                        <span><strong>OIDC / SSO</strong> <span class="muted">— Single sign-on via OpenID Connect</span></span>
+                    </label>
+                    <label class="checkbox">
+                        <input x-model="wizardForm.feature_webauthn" type="checkbox" checked />
+                        <span><strong>WebAuthn / Passkeys</strong> <span class="muted">— Passwordless login with biometrics</span></span>
+                    </label>
+                    <label class="checkbox">
+                        <input x-model="wizardForm.feature_webhooks" type="checkbox" />
+                        <span><strong>Webhooks</strong> <span class="muted">— Event-driven notifications and integrations</span></span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Step 4: Summary + Apply -->
+            <div x-show="wizardStep === 4">
+                <h2>📋 Summary</h2>
+                <p>Review your configuration before applying.</p>
+                <div class="wizard-summary">
+                    <table>
+                        <tr><td><strong>Proxmox Host</strong></td><td x-text="wizardForm.proxmox_host + ':' + wizardForm.proxmox_port"></td></tr>
+                        <tr><td><strong>Proxmox User</strong></td><td x-text="wizardForm.proxmox_user"></td></tr>
+                        <tr><td><strong>Verify TLS</strong></td><td x-text="wizardForm.proxmox_verify_tls ? 'Yes' : 'No'"></td></tr>
+                        <tr><td><strong>Admin User</strong></td><td x-text="wizardForm.admin_username"></td></tr>
+                        <tr><td><strong>Admin Email</strong></td><td x-text="wizardForm.admin_email || '(not set)'"></td></tr>
+                        <tr><td><strong>2FA</strong></td><td x-text="wizardForm.feature_2fa ? '✅ Enabled' : '❌ Disabled'"></td></tr>
+                        <tr><td><strong>OIDC</strong></td><td x-text="wizardForm.feature_oidc ? '✅ Enabled' : '❌ Disabled'"></td></tr>
+                        <tr><td><strong>WebAuthn</strong></td><td x-text="wizardForm.feature_webauthn ? '✅ Enabled' : '❌ Disabled'"></td></tr>
+                        <tr><td><strong>Webhooks</strong></td><td x-text="wizardForm.feature_webhooks ? '✅ Enabled' : '❌ Disabled'"></td></tr>
+                    </table>
+                </div>
+                <p class="error" x-show="wizardApplyError" x-text="wizardApplyError"></p>
+            </div>
+
+            <!-- Step 5: Done -->
+            <div x-show="wizardStep === 5">
+                <h2>✅ All Set!</h2>
+                <p>Your MoxUI instance is configured and ready to use.</p>
+                <p class="muted">You will be redirected to the dashboard in a moment.</p>
+            </div>
+
+            <!-- Navigation buttons -->
+            <div class="wizard-nav">
+                <button class="link" @click="prevWizardStep()" x-show="wizardStep > 0 && wizardStep < 5">
+                    ← Back
+                </button>
+                <div class="spacer"></div>
+                <button @click="nextWizardStep()" :disabled="wizardNextDisabled" x-show="wizardStep < 4">
+                    <span x-text="wizardStep < 4 ? 'Next →' : ''"></span>
+                </button>
+                <button @click="applyWizardConfig()" :disabled="wizardApplying" x-show="wizardStep === 4">
+                    <span x-text="wizardApplying ? 'Applying…' : '🚀 Apply Configuration'"></span>
+                </button>
+            </div>
+        </div>
+    </main>
+
     <script src="/static/vendor/alpine.min.js" defer></script>
     <script src="/static/app.js"></script>
 </body>

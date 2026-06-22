@@ -162,6 +162,7 @@ mod tests {
             tracing: crate::observability::tracing::TracingConfig::default(),
             data_dir: "/var/lib/moxui".to_string(),
             webhook: crate::config::WebhookConfig::default(),
+            plugins: vec![],
         };
         let jwt = test_jwt();
         let token = jwt
@@ -185,6 +186,7 @@ mod tests {
             None,
             None,
             Arc::new(crate::dashboard_custom::DashboardCustomService::new_in_memory()),
+            crate::plugin::PluginRegistry::new(),
         );
         let app = crate::api::router(state);
         // 1. GET /health → 200, should NOT be audited (read-only + 2xx).

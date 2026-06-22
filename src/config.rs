@@ -49,6 +49,9 @@ pub struct Config {
     /// Data directory for persistent storage (dashboards, etc.).
     #[serde(default = "default_data_dir")]
     pub data_dir: String,
+    /// Enabled plugin names (e.g. `["audit_logger", "webhook_bridge"]`).
+    #[serde(default)]
+    pub plugins: Vec<String>,
 }
 
 fn default_data_dir() -> String {
