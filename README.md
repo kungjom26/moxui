@@ -22,8 +22,9 @@ MoxUI is a web interface for [Proxmox VE](https://www.proxmox.com/en/proxmox-ve)
 - 🌐 **Multi-cluster** — manage multiple Proxmox clusters from one dashboard
 - 📦 **Single container** — one `docker run` and you're up
 - 🎨 **Modern UI** — responsive, dark/light theme, keyboard shortcuts
+- 🔌 **Extensible** — Plugin system, webhooks (Slack/Discord), Terraform provider
 
-**Current Version:** v1.0.0 — Production-ready MVP
+**Current Version:** v1.2.0 — Power User Features
 
 ---
 
@@ -126,11 +127,14 @@ helm upgrade --install moxui ./deploy/k8s/moxui \
 
 ### Core
 - 🖥️ **VM Management** — List, detail, start/stop/shutdown/reboot, delete (with purge/force/skiplock)
+- 🔄 **Live Migration** — Migrate VMs between nodes with live/offline toggle
+- 🔄 **Bulk Operations** — Start/Stop/Reboot/Delete multiple VMs at once
 - 📦 **LXC Management** — List + detail (read-only)
 - 💾 **Storage** — List pools + browse ISO/template content
 - 🌐 **Networking** — List interfaces (bridges, bonds, VLANs, physical) across all nodes
-- 📊 **Dashboard** — Aggregate cluster stats (VMs, LXCs, storage, CPU, memory)
-- 🔄 **Task Polling** — Track async Proxmox operations via UPID
+- 📊 **Dashboard** — Aggregate cluster stats + **custom dashboards** with drag & drop widgets
+- 🔄 **Replication** — CRUD for multi-region replication jobs with status monitoring
+- 🔒 **HA Groups** — Manage High Availability groups (create, edit, delete)
 
 ### Authentication
 - 🔐 **Local Login** — Username + password with bcrypt verification
@@ -155,12 +159,19 @@ helm upgrade --install moxui ./deploy/k8s/moxui \
 - 🔍 **Structured Logging** — JSON output for log aggregation
 - 📡 **OpenTelemetry** — OTLP tracing export (Jaeger, Tempo, etc.)
 
+### Notifications & Integration
+- 🔔 **Webhook Notifications** — Slack & Discord integration with HMAC signing
+- 🔌 **Plugin System** — Extensible via `MoxuiPlugin` trait (audit logger, webhook bridge included)
+- 🏗️ **Terraform Provider** — Infrastructure-as-Code with `moxui_vm` resource
+- 🌐 **i18n** — English + Thai (extensible via `locales/*.json`)
+
 ### Deployment
 - 🐳 **Docker** — Multi-stage build, <15MB runtime image, non-root user
 - ☸️ **Kubernetes** — Helm chart with HPA, PDB, NetworkPolicy, ServiceMonitor
 - 📦 **Debian Package** — `make package-deb` for bare-metal install
 - 🏭 **systemd** — Hardened service unit with `ProtectSystem=strict`
 - 🔄 **VNC Console** — Secure token-based VM console via noVNC (ticket endpoint ready, WS proxy incoming)
+- 🏁 **Migration Wizard** — 6-step setup UI for new deployments
 
 ---
 
@@ -184,6 +195,11 @@ helm upgrade --install moxui ./deploy/k8s/moxui \
 | Backend | Rust 1.78+ · axum 0.7 · tokio · rusqlite · reqwest |
 | Frontend | Alpine.js · Tailwind CSS · uPlot · noVNC |
 | Auth | JWT (RS256) · bcrypt · TOTP (RFC 6238) · WebAuthn · OIDC · OAuth2 |
+| Plugins | `MoxuiPlugin` trait · PluginRegistry · Lifecycle hooks |
+| IaC | Terraform provider (Go SDK v2) |
+| Replication | CRUD API · Job status monitoring |
+| Notifications | Slack · Discord · HMAC · Retry with backoff |
+| i18n | JSON locale files · `$t()` key-based translation |
 | Deployment | Docker · docker-compose · Helm · systemd |
 | Observability | Prometheus · OpenTelemetry · tracing |
 
@@ -191,9 +207,21 @@ helm upgrade --install moxui ./deploy/k8s/moxui \
 
 ## 📦 Features by Version
 
-### v1.0.0 (Current)
+### v1.2.0 (Current)
+- ✅ Phase 4 + Phase 5 features (see below)
+
+### v1.1.0 — Polish & Community
+- ✅ **Live Migration UI** — Migrate VMs between nodes with target + live flag
+- ✅ **HA Group Management** — CRUD for High Availability groups
+- ✅ **Bulk Operations** — Start/Stop/Reboot/Delete multiple VMs at once
+- ✅ **Webhook Notifications** — Slack & Discord integration with HMAC signing
+- ✅ **Custom Dashboards** — Drag & drop widget grid, per-user layouts
+- ✅ **Internationalization** — English + Thai (199 keys each)
+
+### v1.0.0 — Production MVP
 - ✅ Multi-cluster VM dashboard with aggregate stats
 - ✅ VM lifecycle: list, detail, start, stop, shutdown, reboot, delete
+- ✅ Live migration between nodes
 - ✅ LXC and storage read endpoints
 - ✅ Network interface listing (bridges, bonds, VLANs)
 - ✅ Secure auth: JWT + refresh tokens + TOTP 2FA + WebAuthn + OIDC SSO
@@ -203,16 +231,23 @@ helm upgrade --install moxui ./deploy/k8s/moxui \
 - ✅ Prometheus metrics + health endpoints + OpenTelemetry tracing
 - ✅ TLS 1.3 with rustls, security headers (HSTS, CSP, X-Frame-Options)
 - ✅ Docker multi-stage build + Helm chart + Debian package
-- ✅ 130+ tests, Criterion benchmarks, CI gates
+- ✅ 170+ tests, Criterion benchmarks, CI gates
 
-### v1.1+ (Planned)
+### v1.2.0 — Power User Features
+- ✅ **Multi-Region Replication** — CRUD API, scheduling, status monitoring
+- ✅ **Plugin System** — `MoxuiPlugin` trait with lifecycle hooks, 2 built-in plugins
+- ✅ **Terraform Provider** — Go SDK with `moxui_vm` resource (CRUD + acceptance tests)
+- ✅ **Migration Wizard** — 6-step setup wizard in the UI
+
+### v2.0+ (Planned)
 - 🔜 VM/LXC creation and configuration editing
 - 🔜 Storage content upload and management
-- 🔜 VM migration, snapshots, templates
-- 🔜 Cluster HA status, firewall rules, replication
+- 🔜 VM snapshots, templates, backup configuration
 - 🔜 Full VNC WebSocket proxy
 - 🔜 LDAP/AD authentication
 - 🔜 User management UI
+- 🔜 Ceph dashboard
+- 🔜 SDN management
 
 ---
 
@@ -221,9 +256,10 @@ helm upgrade --install moxui ./deploy/k8s/moxui \
 | Phase | When | Deliverable |
 |---|---|---|
 | **v1.0.0** | ✅ Shipped | Production MVP — auth, read + VM control, audit, Docker/K8s |
-| **v1.1** | Q3 2026 | Write operations, storage management, VM creation |
-| **v2.0** | Q4 2026 | Cluster management, HA, firewalls, LDAP |
-| **v3.0** | Q4 2027 | Terraform provider, AI-assisted ops, plugin system |
+| **v1.1.0** | ✅ Shipped | Polish & Community — live migration, HA groups, bulk ops, webhooks, custom dashboards, i18n |
+| **v1.2.0** | ✅ Shipped | Power User — replication, plugin system, Terraform provider, migration wizard |
+| **v2.0** | Q3 2026 | Cluster management, Ceph, SDN, firewalls, LDAP |
+| **v3.0** | Q4 2027 | Multi-region, multi-tenancy, cloud, AI-assisted ops |
 
 ---
 

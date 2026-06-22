@@ -7,13 +7,142 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.0] — 2026-06-22
+
+### Phase 5 — Power User Features
+
+Added multi-region replication, plugin system, Terraform provider, and migration wizard.
+
+#### Multi-Region Replication
+
+- **`src/api/replication.rs`** — CRUD API for replication jobs across clusters
+- **`GET /api/v1/replication`** — List all replication jobs
+- **`POST /api/v1/replication/:cluster/:vmid`** — Create a new replication job
+- **`DELETE /api/v1/replication/:cluster/:vmid/delete`** — Delete a replication job
+- **`GET /api/v1/replication/:cluster/:vmid/status`** — Get replication job status
+- **`ProxmoxClient` methods** — `list_replication()`, `create_replication()`, `delete_replication()`, `get_replication_status()`
+- **`src/proxmox/types.rs`** — `ReplicationJob`, `ReplicationStatus`, `ReplicationSchedule` types
+
+#### Plugin System
+
+- **`src/plugin/mod.rs`** — `MoxuiPlugin` trait with lifecycle hooks (`on_register`, `before_request`, `after_request`, `on_shutdown`)
+- **`src/plugin/audit_logger.rs`** — Built-in plugin: captures every request/response to audit log
+- **`src/plugin/webhook_bridge.rs`** — Built-in plugin: dispatches webhook events via `WebhookDispatcher`
+- **`PluginRegistry`** — Thread-safe registry loading plugins from config
+- **Config integration** — `plugins` section with enable/disable, per-plugin settings
+
+#### Terraform Provider
+
+- **`deploy/terraform/`** — Full Terraform provider scaffold
+  - **`provider/provider.go`** — Provider + `moxui_vm` resource CRUD (Create/Read/Update/Delete)
+  - **`provider/main.go`** — Provider entrypoint
+  - **`provider/resources/resource_vm.go`** — VM resource: `name`, `cluster`, `node`, `vmid`, `memory`, `cores`, `disk_size`, `disk_storage`, `network_bridge`, `iso`, `start_on_create`
+  - **`provider/resources/resource_vm_test.go`** — Acceptance tests
+  - **`provider/go.mod`** — Go module with `terraform-plugin-sdk/v2`
+  - **`deploy/terraform/main.tf`** — Example configuration
+  - **`deploy/terraform/variables.tf`** — Variable definitions
+  - **`deploy/terraform/outputs.tf`** — Output definitions
+  - **`deploy/terraform/README.md`** — Getting started guide
+  - **`deploy/terraform/examples/basic/README.md`** — Basic example docs
+  - **`deploy/terraform/provider/docs/index.md`** — Provider documentation
+
+#### Migration Wizard
+
+- **`ui/index.html`** — 6-step setup wizard UI with step indicators:
+  1. Welcome & connection check
+  2. Proxmox cluster configuration (name, URL, credentials)
+  3. Proxmox data import (VMs, storage, networks summary)
+  4. Admin user creation + role assignment
+  5. Feature selection (auth, audit, monitoring, alerts, i18n)
+  6. Apply + deployment summary
+- **`ui/static/app.js`** — Wizard state machine, form validation, API calls
+- **`src/config.rs`** — Config validation for wizard settings
+
+#### Statistics
+
+| Metric | Value |
+|---|---|
+| Source lines (lib + bin) | ~8,000 |
+| Test count | 170 |
+| Files added | 31 |
+| Terraform provider | Go SDK v2, 1 resource |
+| Plugin system | 2 built-in plugins |
+| Replication endpoints | 4 |
+
+---
+
+## [1.1.0] — 2026-06-22
+
+### Phase 4 — Polish & Community (7 features)
+
+Added live migration, HA group management, bulk operations, webhooks, custom dashboards, and i18n.
+
+#### Live Migration UI
+
+- **`POST /api/v1/vms/:cluster/:node/:vmid/migrate`** — Trigger live migration with target node + live flag
+- **`ProxmoxClient::migrate_vm()`** — Client method calling Proxmox migration endpoint
+- **Frontend** — Migration modal with target node dropdown + live/offline toggle
+
+#### HA Group Management
+
+- **`src/api/hagroups.rs`** — Full CRUD for HA groups
+- **`GET /api/v1/hagroups`** — List all HA groups
+- **`POST /api/v1/hagroups/:cluster/:group`** — Create a new HA group
+- **`DELETE /api/v1/hagroups/:cluster/:group`** — Delete an HA group
+- **`ProxmoxClient` methods** — `list_ha_groups()`, `create_ha_group()`, `delete_ha_group()`
+- **Frontend** — HA Groups page with create/edit/delete
+
+#### Bulk Operations
+
+- **`POST /api/v1/vms/bulk/start`** — Start multiple VMs (JSON array of `{cluster, node, vmid}`)
+- **`POST /api/v1/vms/bulk/stop`** — Stop multiple VMs
+- **`POST /api/v1/vms/bulk/reboot`** — Reboot multiple VMs
+- **`POST /api/v1/vms/bulk/delete`** — Delete multiple VMs
+- **Frontend** — Checkbox selection + "Select All" + action toolbar with batch confirmations
+
+#### Webhook Notifications
+
+- **`src/webhook/mod.rs`** — `WebhookDispatcher` trait + registry for webhook delivery
+- **`src/webhook/dispatcher.rs`** — Slack/Discord formatters, HMAC signing, retry with backoff
+- **`WebhookDispatcher` trait** — `dispatch(event, payload)` with thread-safe async dispatch
+- **Config integration** — `notifications.webhooks[]` with channel type, URL, secret, enabled flag
+- **Two formatters** — Slack (`blocks` API) and Discord (`embeds` API)
+
+#### Custom Dashboards
+
+- **`src/dashboard_custom/mod.rs`** — Widget configuration (type, position, size, settings) with JSON persistence
+- **`GET /api/v1/dashboard/custom`** — Get user's saved dashboard layout
+- **`POST /api/v1/dashboard/custom`** — Save dashboard layout
+- **`GET /api/v1/dashboard/custom/widget-types`** — List available widget types
+- **Frontend** — Drag & drop widget grid, add/remove/rearrange widgets
+
+#### Internationalization (i18n)
+
+- **`ui/locales/en.json`** — English translations (199 keys)
+- **`ui/locales/th.json`** — Thai translations (199 keys)
+- **Frontend** — `$t()` function for key-based translation, language switcher dropdown
+- **Keys organized** — sidebar, vms, storage, network, dashboard, auth, audit, settings, common, notifications
+
+#### Statistics
+
+| Metric | Value |
+|---|---|
+| Source lines (lib + bin) | ~7,000 |
+| Test count | 170 |
+| Files added | 20 |
+| Webhook formatters | 2 (Slack + Discord) |
+| i18n locales | 2 (EN + TH) |
+| Locale keys | 199 |
+
+---
+
 ## [1.0.0] — 2026-06-22
 
 ### Production Release — v1.0.0 MVP
 
-v1.0.0 consolidates all Phase 0–4 features into a production-ready MVP.
+v1.0.0 consolidates all Phase 0–3 features into a production-ready MVP.
 
-#### Phase 4 — WebAuthn / Passkey Support (Day 21)
+#### Phase 3 — WebAuthn / Passkey Support (Day 21)
 
 Added passwordless authentication via WebAuthn / passkeys (platform authenticators,
 YubiKeys, Touch ID, Windows Hello).
@@ -164,7 +293,6 @@ YubiKeys, Touch ID, Windows Hello).
 - **No cluster-level endpoints** — HA status, replication, firewall (v1.1+)
 - **No LDAP/AD authentication** — v1.1 feature
 - **No user management UI** — users seeded from config file only
-- **No Terraform provider** — planned for v2.0
 
 #### Statistics
 
@@ -256,6 +384,8 @@ and writes every state-changing request to a tamper-evident audit log.
 
 ---
 
+[1.2.0]: https://github.com/kungjom26/moxui/releases/tag/v1.2.0
+[1.1.0]: https://github.com/kungjom26/moxui/releases/tag/v1.1.0
 [1.0.0]: https://github.com/kungjom26/moxui/releases/tag/v1.0.0
 [0.2.0]: https://github.com/kungjom26/moxui/releases/tag/v0.2.0
 [0.1.1]: https://github.com/kungjom26/moxui/releases/tag/v0.1.1

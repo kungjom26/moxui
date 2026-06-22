@@ -1,6 +1,6 @@
-# 🚀 MoxUI — Future Roadmap (v1.2 → v3.0)
+# 🚀 MoxUI — Future Roadmap (v2.0 → v3.0)
 
-> **Purpose:** Features ที่ **ไม่อยู่ใน v1.0.0** แต่มีแผนจะทำในอนาคต — จัดเรียงตาม phase ที่คาดว่าจะ ship
+> **Purpose:** Features ที่ **ยังไม่ได้ทำ** (Phase 4-5 เสร็จแล้ว) — จัดเรียงตาม phase ที่คาดว่าจะ ship
 >
 > **Status:** Planning (ไม่ commit ตายตัว — ปรับตาม feedback)
 >
@@ -11,137 +11,66 @@
 
 ---
 
+## ✅ Completed: Phase 4 (Polish & Community)
+
+| Feature | Status |
+|---|---|
+| **Live Migration UI** | ✅ Done — `POST /api/v1/vms/:cluster/:node/:vmid/migrate` |
+| **HA Group Management** | ✅ Done — CRUD for HA groups |
+| **Ceph Dashboard** | ❌ Deferred to v2.0 |
+| **Bulk Operations** | ✅ Done — Start/Stop/Reboot/Delete multiple VMs |
+| **Webhook Notifications** | ✅ Done — Slack & Discord, HMAC signing |
+| **Custom Dashboards** | ✅ Done — Drag & drop widgets |
+| **Multi-language i18n** | ✅ Done — English + Thai |
+
+## ✅ Completed: Phase 5 (Power User)
+
+| Feature | Status |
+|---|---|
+| **Multi-Region Replication** | ✅ Done — CRUD API + status monitoring |
+| **Plugin System** | ✅ Done — `MoxuiPlugin` trait, 2 built-in plugins |
+| **Terraform Provider** | ✅ Done — Go SDK, `moxui_vm` resource |
+| **Migration Wizard** | ✅ Done — 6-step setup UI |
+| **Mobile app (Tauri or React Native)** | ❌ Deferred to v2.0+ |
+
+---
+
 ## 📅 Timeline Overview
 
 ```
-v1.0.0 (Q3 2026)        MVP + Production-ready
-v1.1   (Q4 2026)        Polish + community features
-v1.2   (Q1 2027)        Power user features
-v2.0   (Q3 2027)        Major: advanced cluster mgmt
+v1.0.0 (Q2 2026)        ✅ Production MVP
+v1.1.0 (Q2 2026)        ✅ Polish & Community
+v1.2.0 (Q2 2026)        ✅ Power User Features
+v2.0   (Q3 2026)        Advanced cluster mgmt
 v3.0   (Q4 2027)        Multi-region + cloud
 ```
 
 ---
 
-## 🟢 v1.1 (Q4 2026) — Polish & Community
-
-**Theme:** ขัดเกลา UX + เพิ่ม feature ที่ user community ขอ
-
-### 1.1.1 VM Improvements
-
-| Feature | Description | Priority |
-|---|---|---|
-| **Bulk operations** | Start/stop/tag/delete หลาย VM พร้อมกัน พร้อม progress bar | High |
-| **VM create wizard** | สร้าง VM แบบ 5-step wizard (general → CPU/RAM → disk → network → OS) | High |
-| **VM clone** | Clone VM (full / linked) | Medium |
-| **VM migrate** | Online migrate ระหว่าง nodes ภายใน cluster | Medium |
-| **VM template management** | สร้าง template จาก VM, deploy VM จาก template | Medium |
-| **Custom column chooser** | ให้ user เลือก column ที่จะแสดงใน VM list | Low |
-
-### 1.1.2 UI/UX Polish
-
-| Feature | Description | Priority |
-|---|---|---|
-| **PWA support** | Install เป็น app, offline cache | High |
-| **Mobile app (Tauri)** | Native shell wrapper for desktop shortcut | Medium |
-| **Theme: more options** | Solarized, Monokai, custom accent color | Low |
-| **Dashboard customization** | Reorder widgets, hide/show | Medium |
-| **Quick actions bar** | "Start all production", "Stop all dev" | Medium |
-| **Saved views** | Bookmark filter+sort combos | Low |
-
-### 1.1.3 Observability Enhancements
-
-| Feature | Description | Priority |
-|---|---|---|
-| **OpenTelemetry tracing** | OTLP export to Jaeger/Tempo | High |
-| **Stats export (CSV/JSON)** | Download historical stats | Medium |
-| **Custom date range** | Stats chart: any date range | Low |
-| **Comparison view** | Compare 2 VMs side-by-side | Low |
-
-### 1.1.4 Quality of Life
-
-| Feature | Description | Priority |
-|---|---|---|
-| **Bulk import (CSV/JSON)** | Bulk create VMs from spreadsheet | Medium |
-| **CLI tool (moxui-cli)** | Command-line interface for scripting | High |
-| **Terraform provider** | Infrastructure-as-Code integration | High |
-| **Ansible collection** | Automation playbook integration | Medium |
-
----
-
-## 🟢 v1.2 (Q1 2027) — Power User Features
-
-**Theme:** สำหรับ admin ที่ต้องการ advanced control
-
-### 1.2.1 Advanced VM
-
-| Feature | Description | Priority |
-|---|---|---|
-| **VM hardware hot-plug** | Add/remove disk, NIC, RAM without reboot | High |
-| **VM resource limits** | CPU quota, IOPS limit, network bandwidth cap | High |
-| **VM console recording** | Record VNC session to file (webm) | Medium |
-| **Multi-monitor console** | Multiple display in console | Medium |
-| **VM console sharing** | Share console URL with read-only access | Medium |
-
-### 1.2.2 Advanced Auth
-
-| Feature | Description | Priority |
-|---|---|---|
-| **WebAuthn / Passkey (full)** | Yubikey, Touch ID, Windows Hello — complete rollout | High |
-| **OIDC SSO (GitHub, Okta, Auth0)** | เพิ่ม provider อื่นนอกจาก Google | High |
-| **LDAP / Active Directory** | Enterprise directory integration | Medium |
-| **SAML SSO** | Enterprise federation | Low |
-| **Custom role builder** | สร้าง role เอง กำหนด permission แต่ละตัว | Medium |
-| **API keys (machine-to-machine)** | Long-lived tokens for scripts | High |
-| **mTLS for Proxmox API** | Mutual TLS instead of ticket | Low |
-
-### 1.2.3 Storage
-
-| Feature | Description | Priority |
-|---|---|---|
-| **Create storage pool** | Add new storage via UI (LVM/ZFS/dir) | Medium |
-| **Storage migration** | Move VM disk between storage | Medium |
-| **Disk resize** | Grow/shrink VM disk | Medium |
-| **Disk import/export** | Upload/download disk images (qcow2, raw, vmdk) | Medium |
-
-### 1.2.4 Network
-
-| Feature | Description | Priority |
-|---|---|---|
-| **Bridge creation** | Add new bridge via UI | Medium |
-| **VLAN management** | Create/edit VLANs | Medium |
-| **IPAM (IP address management)** | Track which IP is used by which VM | High |
-| **Network traffic analysis** | Per-VM bandwidth over time | Low |
-
-### 1.2.5 HA & Cluster
-
-| Feature | Description | Priority |
-|---|---|---|
-| **HA group management** | Configure HA groups, priorities | Medium |
-| **HA status dashboard** | See which VMs are HA-managed, failover history | High |
-| **Cluster join/leave** | Add/remove nodes via UI | Medium |
-| **Cluster backup config** | Backup Proxmox cluster config | Low |
-
----
-
-## 🔵 v2.0 (Q3 2027) — Advanced Cluster Management
+## 🔵 v2.0 (Q3 2026) — Advanced Cluster Management
 
 **Theme:** สำหรับ Proxmox Cluster ขนาดใหญ่ (10+ nodes) และ multi-cluster
 
-### 2.0.1 Multi-cluster Advanced
+### 2.0.1 VM & Storage Improvements
 
 | Feature | Description | Priority |
 |---|---|---|
-| **Cross-cluster live migration** | VM migrate ระหว่าง clusters | High |
-| **Cross-cluster replication** | Replicate VM ระหว่าง clusters (async) | High |
-| **Cross-cluster backup** | Backup VM from cluster A to storage in cluster B | Medium |
-| **Cluster federation view** | แสดงทุก cluster ในมุมมองเดียว (geographic) | Medium |
+| **VM creation wizard** | สร้าง VM แบบ 5-step wizard (general → CPU/RAM → disk → network → OS) | High |
+| **VM clone** | Clone VM (full / linked) | High |
+| **VM config editor** | Edit VM CPU, RAM, disk, network via UI | High |
+| **VM template management** | สร้าง template จาก VM, deploy VM จาก template | Medium |
+| **LXC write operations** | Start/Stop/Shutdown/Reboot/Delete LXC | High |
+| **Storage upload** | Upload ISO/CT templates via UI | High |
+| **Storage delete** | Delete ISO/template content | High |
+| **VM snapshots** | List, create, rollback, delete snapshots | High |
+| **VM backup trigger** | Trigger vzdump via UI (storage, mode, compression) | High |
+| **Disk resize** | Grow/shrink VM disk via UI | Medium |
 
 ### 2.0.2 Ceph Integration
 
 | Feature | Description | Priority |
 |---|---|---|
-| **Ceph cluster dashboard** | OSD/PG/MDS/MGR status | High |
+| **Ceph cluster dashboard** | OSD/PG/MDS/MGR status, health overview | High |
 | **Ceph pool management** | Create/edit pools, CRUSH rules | Medium |
 | **Ceph performance graphs** | IOPS, latency, throughput per pool | High |
 | **Ceph capacity planning** | Predict when full based on growth rate | Low |
@@ -155,23 +84,42 @@ v3.0   (Q4 2027)        Multi-region + cloud
 | **SDN Subnet management** | IP ranges per subnet | Medium |
 | **SDN topology view** | Visual graph of zones/VNets | Low |
 
-### 2.0.4 Advanced Storage
+### 2.0.4 Advanced Auth & Security
 
 | Feature | Description | Priority |
 |---|---|---|
-| **ZFS pool management** | Create/edit ZFS pools, datasets | Medium |
-| **ZFS snapshots UI** | Browse/restore ZFS snapshots | Medium |
-| **iSCSI target management** | Add/remove iSCSI targets | Low |
-| **NFS share management** | Add/remove NFS exports | Low |
+| **LDAP / Active Directory** | Enterprise directory integration | High |
+| **User management UI** | CRUD users, assign roles, per-cluster permissions | High |
+| **API keys management UI** | Create/revoke API keys from UI | Medium |
+| **RBAC custom roles** | Define custom permission sets | Medium |
+| **SAML SSO** | Enterprise federation | Low |
+| **mTLS for Proxmox API** | Mutual TLS instead of ticket | Low |
 
-### 2.0.5 VM Advanced
+### 2.0.5 Network & Cluster
 
 | Feature | Description | Priority |
 |---|---|---|
-| **Live migration UI** | Trigger + monitor live migration across nodes | High |
-| **Cross-host live migration w/o shared storage** | Use replication-based migration | High |
-| **Resource overcommit warnings** | Alert when overcommit ratio too high | Medium |
-| **Right-sizing recommendations** | ML-based suggestion for optimal VM size | Low |
+| **Full VNC WebSocket proxy** | Working WS proxy via tokio-tungstenite | High |
+| **Bridge creation UI** | Add new bridge via UI | Medium |
+| **VLAN management** | Create/edit VLANs | Medium |
+| **IPAM** | Track which IP is used by which VM | High |
+| **HA status dashboard** | See which VMs are HA-managed, failover history | Medium |
+| **Cluster firewall rules** | View/manage firewall rules | Medium |
+| **Cluster join/leave** | Add/remove nodes via UI | Medium |
+| **Replication schedule CRUD** | Schedule replication jobs | Medium |
+
+### 2.0.6 UI/UX Polish
+
+| Feature | Description | Priority |
+|---|---|---|
+| **PWA support** | Install as app, offline cache | High |
+| **Mobile app (Tauri)** | Native shell wrapper | Medium |
+| **Keyboard shortcuts** | g+d, g+v, g+s, /, c, ?, Esc | Medium |
+| **Saved views / bookmarks** | Bookmark filter+sort combos | Low |
+| **Global search (Cmd+K)** | Search VM, LXC, node, storage | High |
+| **Notification center** | Bell icon, unread/all | Medium |
+| **Stats export (CSV/JSON)** | Download historical stats | Medium |
+| **Quick actions bar** | "Start all production", "Stop all dev" | Medium |
 
 ---
 
@@ -184,6 +132,8 @@ v3.0   (Q4 2027)        Multi-region + cloud
 | Feature | Description | Priority |
 |---|---|---|
 | **Geographic cluster view** | Map view of clusters worldwide | High |
+| **Cross-cluster live migration** | VM migrate between clusters | High |
+| **Cross-cluster backup** | Backup VM from cluster A to storage in cluster B | Medium |
 | **Region failover** | Move workloads between regions on failure | High |
 | **Latency-aware scheduling** | Place VMs based on user location | Medium |
 | **Data residency compliance** | Restrict VMs to specific regions (GDPR) | High |
@@ -200,7 +150,7 @@ v3.0   (Q4 2027)        Multi-region + cloud
 ### 3.0.3 Cloud Integration
 
 | Feature | Description | Priority |
-|---|---hook---|---|
+|---|---|---|
 | **Hybrid cloud (Proxmox + AWS/GCP)** | Bridge on-prem to cloud | Medium |
 | **Cloud backup target** | Backup Proxmox → S3/GCS/Azure | High |
 | **Disaster recovery as a service** | Replicate to cloud, restore on demand | Medium |
@@ -220,11 +170,11 @@ v3.0   (Q4 2027)        Multi-region + cloud
 
 | Feature | Description | Priority |
 |---|---|---|
-| **Plugin system** | 3rd-party plugins (custom pages, widgets) | High |
-| **Webhook integrations** | Slack, Discord, Teams, PagerDuty | High |
-| **Prometheus exporter** | Expose MoxUI metrics externally | Medium |
 | **OpenAPI/Swagger spec** | Generate client SDKs | High |
+| **Ansible collection** | Automation playbook integration | Medium |
+| **Prometheus ServiceMonitor** | Auto-metric scraping in K8s | Medium |
 | **MoxUI Mobile (React Native)** | Native iOS/Android app | Medium |
+| **CLI tool (moxui-cli)** | Command-line interface for scripting | Medium |
 
 ---
 
@@ -264,24 +214,13 @@ Is it in MoxUI's mission (modern UI for Proxmox)?
 
 ---
 
-## 🔄 How to contribute
-
-**Community สามารถ contribute feature ใหม่ได้:**
-
-1. เปิด GitHub Issue ที่ `kungjom26/moxui` (template: Feature Request)
-2. ระบุ use case + alternative + ความคล้ายกับ feature ที่มีอยู่
-3. รอ maintainer review
-4. ถ้า approved → เพิ่มใน roadmap ที่ phase ที่เหมาะสม
-
----
-
 ## 📈 Adoption Metrics (target ต่อ release)
 
 | Release | Downloads | Active clusters | GitHub stars |
 |---|---|---|---|
-| v1.0.0 | 1,000+ | 100+ | 500+ |
-| v1.1 | 5,000+ | 500+ | 1,500+ |
-| v1.2 | 15,000+ | 2,000+ | 4,000+ |
+| v1.0.0 (✅ shipped) | 1,000+ | 100+ | 500+ |
+| v1.1.0 (✅ shipped) | 5,000+ | 500+ | 1,500+ |
+| v1.2.0 (✅ shipped) | 15,000+ | 2,000+ | 4,000+ |
 | v2.0 | 50,000+ | 10,000+ | 10,000+ |
 | v3.0 | 100,000+ | 25,000+ | 25,000+ |
 
@@ -289,14 +228,14 @@ Is it in MoxUI's mission (modern UI for Proxmox)?
 
 ## 🎯 TL;DR
 
-- **v1.0.0** = MVP + production-ready
-- **v1.1** = polish + community requests
-- **v1.2** = power user features + advanced auth
-- **v2.0** = advanced cluster mgmt + Ceph + SDN
+- **v1.0.0** ✅ = MVP + production-ready
+- **v1.1.0** ✅ = polish + community features (Phase 4)
+- **v1.2.0** ✅ = power user features (Phase 5)
+- **v2.0** = advanced cluster mgmt + Ceph + SDN + LDAP + VM creation
 - **v3.0** = multi-region + multi-tenancy + cloud + AI
 
 **ถ้า feature ที่อยากได้ไม่อยู่ใน list** → บอกมา จะเพิ่มใน phase ที่เหมาะสม
 
 ---
 
-**Last updated:** 2026-06-20 (synced with PROPOSAL.md decisions)
+**Last updated:** 2026-06-22 (Phase 4+5 complete)
