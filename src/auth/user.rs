@@ -164,10 +164,14 @@ impl User {
 
 /// In-memory user store. Cheap to clone (`Arc` inside) so it can live in
 /// `AppState` and be queried from request handlers.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct UserStore {
     /// All users, keyed by username (case-sensitive).
     pub(crate) users: HashMap<String, User>,
+    /// Per-user allowed clusters. Key = username, Value = allowed cluster names.
+    /// Empty vec for a user means access to ALL clusters (admin / unrestricted).
+    /// When non-empty, the user can only see/operate on those clusters.
+    pub(crate) allowed_clusters: HashMap<String, Vec<String>>,
 }
 
 impl UserStore {
@@ -176,11 +180,13 @@ impl UserStore {
     pub fn new() -> Self {
         Self {
             users: HashMap::new(),
+            allowed_clusters: HashMap::new(),
         }
     }
 
     /// Build a store pre-populated with the given users. Duplicate usernames
-    /// are silently dropped (first one wins).
+    /// are silently dropped (first one wins). All users get unrestricted
+    /// cluster access (empty allowed_clusters).
     #[must_use]
     pub fn with_users(users: Vec<User>) -> Self {
         let mut store = Self::new();
@@ -210,9 +216,22 @@ impl UserStore {
 
     /// Build a `UserStore` from a list of [`crate::config::UserConfig`].
     /// Returns the first config error (bad role, missing password, etc).
+    ///
+    /// Also populates the per-user allowed_clusters map from the config's
+    /// `allowed_clusters` field. Users with an empty vec can access all clusters.
     pub fn from_configs(configs: &[crate::config::UserConfig]) -> Result<Self, String> {
         let users: Result<Vec<User>, String> = configs.iter().map(User::from_config).collect();
-        Ok(UserStore::with_users(users?))
+        let users = users?;
+        let allowed_clusters: HashMap<String, Vec<String>> = configs
+            .iter()
+            .map(|c| (c.username.clone(), c.allowed_clusters.clone()))
+            .collect();
+        let user_map: HashMap<String, User> =
+            users.into_iter().map(|u| (u.username.clone(), u)).collect();
+        Ok(Self {
+            users: user_map,
+            allowed_clusters,
+        })
     }
 
     /// Verify a username + password. Returns the user on success.
@@ -230,6 +249,41 @@ impl UserStore {
             .ok()
             .unwrap_or(false);
         ok.then_some(user)
+    }
+
+    /// Check if a user can access a specific cluster.
+    ///
+    /// A user can access a cluster if:
+    /// - The user has no explicit cluster restrictions (allowed_clusters empty),
+    /// - The cluster is in the user's allowed_clusters list.
+    ///
+    /// Returns `true` for unknown usernames (fail-open for backward compat).
+    #[must_use]
+    pub fn user_can_access_cluster(&self, username: &str, cluster: &str) -> bool {
+        match self.allowed_clusters.get(username) {
+            // No restrictions — user can access all clusters.
+            None => true,
+            // Empty restrictions list is treated as "all clusters".
+            Some(restrictions) if restrictions.is_empty() => true,
+            // Check if the cluster is in the allowed list.
+            Some(restrictions) => restrictions.iter().any(|c| c == cluster),
+        }
+    }
+
+    /// Returns the list of allowed clusters for a user, or `None` if the
+    /// user has no restrictions (can access all clusters).
+    ///
+    /// An empty `Some(vec![])` also means all clusters (admin default).
+    #[must_use]
+    pub fn user_allowed_clusters(&self, username: &str) -> Option<&[String]> {
+        self.allowed_clusters.get(username).map(|v| v.as_slice())
+    }
+
+    /// Returns cluster permissions for a user: `None` = unrestricted,
+    /// `Some(vec)` = limited to these clusters.
+    #[must_use]
+    pub fn user_allowed_clusters_owned(&self, username: &str) -> Option<Vec<String>> {
+        self.allowed_clusters.get(username).cloned()
     }
 }
 

@@ -1,0 +1,108 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "moxui.fullname" . }}
+  labels:
+    {{- include "moxui.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "moxui.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "moxui.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "moxui.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            # Point to our generated config
+            - name: MOXUI_CONFIG
+              value: /etc/moxui/config.yaml
+            # Database path (from config or persistent volume)
+            - name: MOXUI_DATABASE__PATH
+              value: {{ .Values.config.database.path }}
+            # Expose cluster passwords from the Secret as env vars
+            {{- range $i, $cluster := .Values.clusters }}
+            - name: MOXUI_CLUSTER_{{ $i }}_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "moxui.secretName" $ }}
+                  key: cluster-password-{{ $i }}
+            {{- end }}
+            # JWT keys
+            - name: MOXUI_AUTH__JWT_PRIVATE_KEY_PEM_PATH
+              value: /etc/moxui/secrets/jwt_priv.pem
+            - name: MOXUI_AUTH__JWT_PUBLIC_KEY_PEM_PATH
+              value: /etc/moxui/secrets/jwt_pub.pem
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/moxui/config.yaml
+              subPath: config.yaml
+              readOnly: true
+            - name: secrets
+              mountPath: /etc/moxui/secrets
+              readOnly: true
+            - name: data
+              mountPath: /var/lib/moxui/data
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "moxui.configmapName" . }}
+        - name: secrets
+          secret:
+            secretName: {{ include "moxui.secretName" . }}
+            defaultMode: 0400
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "moxui.fullname" . }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

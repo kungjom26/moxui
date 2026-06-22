@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "moxui.configmapName" . }}
+  labels:
+    {{- include "moxui.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    server:
+      bind: {{ .Values.config.server.bind | quote }}
+      workers: {{ .Values.config.server.workers }}
+    database:
+      path: {{ .Values.config.database.path | quote }}
+      max_connections: {{ .Values.config.database.max_connections }}
+      run_migrations: {{ .Values.config.database.run_migrations }}
+    logging:
+      level: {{ .Values.config.logging.level | quote }}
+      format: {{ .Values.config.logging.format | quote }}
+    auth:
+      jwt_private_key_pem_path: /etc/moxui/secrets/jwt_priv.pem
+      jwt_public_key_pem_path: /etc/moxui/secrets/jwt_pub.pem
+    clusters:
+{{ include "moxui.clustersYaml" . | indent 6 }}

@@ -8,6 +8,8 @@
 //! - `POST /api/v1/auth/refresh` — exchange a refresh token for a new JWT +
 //!   new refresh token (rotation).
 //! - `POST /api/v1/auth/logout` — revoke a refresh token.
+//! - `POST /api/v1/auth/oidc/login` — start OIDC login flow (returns auth URL)
+//! - `POST /api/v1/auth/oidc/callback` — complete OIDC login flow (returns JWT)
 
 use axum::{
     extract::State,
@@ -499,6 +501,186 @@ pub async fn two_factor_disable(
 
     Ok(Json(serde_json::json!({
         "status": "2fa_disabled",
+    })))
+}
+
+// ── OIDC / OAuth2 SSO ──────────────────────────────────────────────
+
+/// Request body for `POST /api/v1/auth/oidc/login`.
+#[derive(Debug, Deserialize)]
+pub struct OidcLoginRequest {
+    /// Provider name: `"google"` or `"github"`.
+    pub provider: String,
+}
+
+/// Response body for `POST /api/v1/auth/oidc/login`.
+#[derive(Debug, Serialize)]
+pub struct OidcLoginResponse {
+    /// Authorization URL to redirect the user's browser to.
+    pub auth_url: String,
+    /// State key to submit back on the callback.
+    pub state_key: String,
+}
+
+/// `POST /api/v1/auth/oidc/login` — start an OIDC/OAuth2 login flow.
+///
+/// Returns an authorization URL to redirect the user to, and a state key
+/// that must be sent back on the callback.
+pub async fn oidc_login(
+    State(state): State<AppState>,
+    Json(req): Json<OidcLoginRequest>,
+) -> Result<Json<OidcLoginResponse>, Response> {
+    let oidc = state.oidc.as_ref().ok_or_else(|| {
+        tracing::warn!(provider = %req.provider, "OIDC login attempted but OIDC is not configured");
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "OIDC is not configured"})),
+        )
+            .into_response()
+    })?;
+
+    match oidc.start_login(&req.provider).await {
+        Ok((auth_url, state_key)) => {
+            tracing::info!(
+                provider = %req.provider,
+                "OIDC login flow started"
+            );
+            Ok(Json(OidcLoginResponse {
+                auth_url: auth_url.to_string(),
+                state_key,
+            }))
+        }
+        Err(e) => {
+            tracing::error!(
+                provider = %req.provider,
+                error = %e,
+                "OIDC login start failed"
+            );
+            Err((
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": e})),
+            )
+                .into_response())
+        }
+    }
+}
+
+/// Request body for `POST /api/v1/auth/oidc/callback`.
+#[derive(Debug, Deserialize)]
+pub struct OidcCallbackRequest {
+    /// State key returned from the login endpoint.
+    pub state_key: String,
+    /// Authorization code from the provider.
+    pub code: String,
+    /// State parameter returned by the provider (CSRF check).
+    pub state: String,
+}
+
+/// `POST /api/v1/auth/oidc/callback` — complete an OIDC/OAuth2 login flow.
+///
+/// Exchanges the authorization code for tokens, verifies the user identity,
+/// auto-creates a MoxUI user if this is the first login, and returns a
+/// JWT + refresh token (same shape as the regular login response).
+pub async fn oidc_callback(
+    State(state): State<AppState>,
+    Json(req): Json<OidcCallbackRequest>,
+) -> Result<Json<serde_json::Value>, Response> {
+    let oidc = state.oidc.as_ref().ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "OIDC is not configured"})),
+        )
+            .into_response()
+    })?;
+
+    // Handle the callback — exchange code for user info
+    let user_info = match oidc.handle_callback(&req.state_key, &req.code, &req.state).await {
+        Ok(info) => info,
+        Err(e) => {
+            tracing::warn!(error = %e, "OIDC callback failed");
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({"error": e})),
+            )
+                .into_response());
+        }
+    };
+
+    // Auto-create or retrieve the MoxUI user
+    let oidc_key = format!("{}:{}", user_info.provider, user_info.sub);
+    let user = {
+        let mut users = state.oidc_users.lock().await;
+        if let Some(existing) = users.get(&oidc_key) {
+            if !existing.enabled {
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    Json(serde_json::json!({"error": "account is disabled"})),
+                )
+                    .into_response());
+            }
+            existing.clone()
+        } else {
+            // First login — auto-create user
+            let new_user = crate::auth::User {
+                id: oidc_key.clone(),
+                username: user_info.username.clone(),
+                display_name: user_info.display_name.clone(),
+                email: user_info.email.clone(),
+                password_hash: secrecy::SecretString::new(
+                    // Generate a random password — user will use SSO, not password auth
+                    uuid::Uuid::new_v4().to_string().into_boxed_str(),
+                ),
+                role: crate::auth::Role::Viewer,
+                enabled: true,
+                totp_secret: None,
+                totp_enabled: false,
+                backup_codes: vec![],
+            };
+            tracing::info!(
+                provider = %user_info.provider,
+                sub = %user_info.sub,
+                username = %new_user.username,
+                "OIDC user auto-created"
+            );
+            users.insert(oidc_key.clone(), new_user.clone());
+            new_user
+        }
+    };
+
+    // Issue JWT + refresh token
+    let now = chrono::Utc::now().timestamp();
+    let claims = crate::auth::Claims {
+        sub: user.id.clone(),
+        username: user.username.clone(),
+        role: user.role.to_string(),
+        iat: now,
+        exp: now + state.config.auth.jwt_lifetime_secs,
+    };
+    let token = match state.jwt.encode(&claims) {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!(error = %e, "JWT encode during OIDC callback failed");
+            return Err(internal_response("failed to sign token"));
+        }
+    };
+
+    let refresh = state
+        .refresh_store
+        .issue(&user.id, DEFAULT_REFRESH_TTL_SECS);
+
+    tracing::info!(
+        provider = %user_info.provider,
+        username = %user.username,
+        role = %user.role,
+        "OIDC login complete"
+    );
+
+    Ok(Json(serde_json::json!(LoginResponse {
+        token,
+        expires_in: state.config.auth.jwt_lifetime_secs,
+        token_type: "Bearer",
+        user: UserView::from(&user),
+        refresh_token: refresh.token,
     })))
 }
 

@@ -186,9 +186,10 @@ mod tests {
             },
             clusters: vec![],
             auth: AuthConfig::default(),
+            tracing: crate::observability::tracing::TracingConfig::default(),
         };
 
-        AppState::new(cfg, vec![], audit, jwt, UserStore::new(), None, None)
+        AppState::new(cfg, vec![], audit, jwt, UserStore::new(), None, None, None, None)
     }
 
     fn seed_entries(store: &AuditStore, count: usize) {

@@ -14,6 +14,7 @@
 
 pub mod jwt;
 pub mod middleware;
+pub mod oidc;
 pub mod password;
 pub mod refresh;
 pub mod totp;
@@ -22,7 +23,7 @@ pub mod vnc;
 pub mod webauthn;
 
 pub use jwt::{Claims, JwtService};
-pub use middleware::{require_auth, require_role, AuthContext};
+pub use middleware::{require_auth, require_cluster_access, require_role, AuthContext};
 pub use password::{hash_password, verify_password};
 pub use refresh::RefreshStore;
 pub use totp::PreAuthStore;

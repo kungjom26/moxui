@@ -1196,6 +1196,7 @@ mod vm_action_integration_tests {
             },
             clusters: vec![],
             auth: AuthConfig::default(),
+            tracing: crate::observability::tracing::TracingConfig::default(),
         };
         let priv_pem = include_bytes!("../../tests/fixtures/test_jwt_priv.pem");
         let pub_pem = include_bytes!("../../tests/fixtures/test_jwt_pub.pem");
@@ -1206,6 +1207,8 @@ mod vm_action_integration_tests {
             audit.clone(),
             jwt,
             UserStore::new(),
+            None,
+            None,
             None,
             None,
         );
@@ -1649,6 +1652,7 @@ mod vm_action_integration_tests {
                 jwt_lifetime_secs: 3600,
                 ..AuthConfig::default()
             },
+            tracing: crate::observability::tracing::TracingConfig::default(),
         };
         let priv_pem = include_bytes!("../../tests/fixtures/test_jwt_priv.pem");
         let pub_pem = include_bytes!("../../tests/fixtures/test_jwt_pub.pem");
@@ -1680,7 +1684,7 @@ mod vm_action_integration_tests {
             u
         };
         let users = crate::auth::UserStore::with_users(vec![admin, operator, viewer, disabled]);
-        let state = AppState::new(cfg, vec![], audit.clone(), jwt, users, None, None);
+        let state = AppState::new(cfg, vec![], audit.clone(), jwt, users, None, None, None, None);
         (state, audit)
     }
 
@@ -2207,6 +2211,7 @@ mod vm_action_integration_tests {
             },
             clusters: vec![],
             auth: AuthConfig::default(),
+            tracing: crate::observability::tracing::TracingConfig::default(),
         };
         let priv_pem = include_bytes!("../../tests/fixtures/test_jwt_priv.pem");
         let pub_pem = include_bytes!("../../tests/fixtures/test_jwt_pub.pem");
@@ -2226,6 +2231,8 @@ mod vm_action_integration_tests {
             audit.clone(),
             jwt,
             crate::auth::UserStore::new(),
+            None,
+            None,
             None,
             None,
         );

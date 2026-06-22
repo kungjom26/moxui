@@ -1,0 +1,38 @@
+# Patterns to ignore when building Helm packages.
+# This is supported by Helm v3.2+.
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# CI
+.github/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+*.pem
+*.key
+*.crt
+*.local
+.env
+.env.*
+
+# Backups
+*.bak
+*.tar.gz
+*.tgz
+
+# Test / build artifacts
+target/
+coverage/

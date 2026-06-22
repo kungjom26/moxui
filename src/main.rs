@@ -11,6 +11,7 @@ use moxui::audit::AuditStore;
 use moxui::auth::webauthn::WebauthnState;
 use moxui::auth::{JwtService, UserStore};
 use moxui::config::Config;
+use moxui::observability::metrics::{MetricsLayer, MetricsService};
 use moxui::proxmox::ProxmoxClient;
 use moxui::state::AppState;
 
@@ -57,20 +58,25 @@ async fn main() -> ExitCode {
     // Install rustls crypto provider (required by rustls 0.23+)
     moxui::install_crypto_provider();
 
+    // Load configuration
+    let config = match Config::load() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Failed to load config: {e}");
+            return ExitCode::from(1);
+        }
+    };
+
+    // Initialize OpenTelemetry tracing (OTLP) after config is loaded
+    if let Err(e) = moxui::observability::tracing::init_tracing(&config.tracing) {
+        tracing::warn!(error = %e, "Failed to initialize OpenTelemetry tracing — continuing without OTLP");
+    }
+
     tracing::info!(
         version = moxui::VERSION,
         git_sha = moxui::GIT_SHA,
         "Starting MoxUI"
     );
-
-    // Load configuration
-    let config = match Config::load() {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::error!(error = %e, "Failed to load config");
-            return ExitCode::from(1);
-        }
-    };
 
     tracing::info!(
         bind = %config.server.bind,
@@ -174,6 +180,34 @@ async fn main() -> ExitCode {
         None
     };
 
+    // Initialize OIDC / OAuth2 SSO (optional)
+    let oidc_service = if config.auth.oidc.enabled {
+        match moxui::auth::oidc::OidcService::new(&config.auth.oidc.providers).await {
+            Ok(Some(svc)) => {
+                tracing::info!(
+                    providers = config.auth.oidc.providers.len(),
+                    "OIDC / OAuth2 SSO enabled"
+                );
+                Some(svc)
+            }
+            Ok(None) => {
+                tracing::info!("OIDC / OAuth2 SSO enabled but no providers configured");
+                None
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to initialize OIDC / OAuth2 SSO");
+                return ExitCode::from(1);
+            }
+        }
+    } else {
+        tracing::info!("OIDC / OAuth2 SSO disabled (auth.oidc.enabled=false)");
+        None
+    };
+
+    // Initialize metrics service
+    let metrics = MetricsService::new();
+    tracing::info!("Prometheus metrics initialized");
+
     // Create application state
     let state = AppState::new(
         config.clone(),
@@ -183,13 +217,15 @@ async fn main() -> ExitCode {
         users,
         vnc_secret,
         webauthn_state,
+        oidc_service,
+        Some(metrics.clone()),
     );
 
     // Build router — API + UI are merged inside `api::router` so the
     // security-headers layer covers both with a single application.
     // UI serves `/` and `/static/*` (SPA shell + embedded assets) and
     // is public; auth still applies to `/api/v1/*` via the inner layer.
-    let app = moxui::api::router(state);
+    let app = moxui::api::router(state).layer(MetricsLayer::new(metrics));
 
     // Bind and serve (HTTPS if server.tls is configured, plaintext HTTP otherwise)
     let bind = config.server.bind.clone();
@@ -205,6 +241,9 @@ async fn main() -> ExitCode {
         tracing::error!(error = %e, "Server error");
         return ExitCode::from(1);
     }
+
+    // Gracefully shut down OpenTelemetry tracer
+    moxui::observability::tracing::shutdown_tracing();
 
     ExitCode::SUCCESS
 }

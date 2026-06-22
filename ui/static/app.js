@@ -22,6 +22,10 @@ function moxui() {
         loginForm: { username: '', password: '' },
         loginError: null,
         loggingIn: false,
+        // --- passkey ---
+        passkeyBusy: false,
+        passkeyError: null,
+        passkeySuccess: null,
 
         // --- theme ---
         theme: localStorage.getItem('moxui.theme') || 'light',
@@ -218,6 +222,189 @@ function moxui() {
                 this.loginError = String(e);
             } finally {
                 this.loggingIn = false;
+            }
+        },
+
+        // ----- WebAuthn / Passkey -----
+
+        // Decode a base64url-encoded string to an ArrayBuffer.
+        _base64urlToBuffer(b64) {
+            const binary = atob(b64.replace(/-/g, '+').replace(/_/g, '/'));
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) {
+                bytes[i] = binary.charCodeAt(i);
+            }
+            return bytes.buffer;
+        },
+
+        // Encode an ArrayBuffer to a base64url string.
+        _bufferToBase64url(buf) {
+            const bytes = new Uint8Array(buf);
+            let binary = '';
+            for (let i = 0; i < bytes.byteLength; i++) {
+                binary += String.fromCharCode(bytes[i]);
+            }
+            return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+        },
+
+        // Recursively walk the challenge object and decode all `BufferSource` fields
+        // (which arrive as base64url strings from JSON) into ArrayBuffers, so the
+        // browser's `navigator.credentials.create()` / `get()` can consume them.
+        _decodePublicKey(obj) {
+            if (obj == null) return obj;
+            if (typeof obj === 'string') return obj;
+            if (obj instanceof Array) return obj.map(v => this._decodePublicKey(v));
+            if (typeof obj === 'object') {
+                const decoded = {};
+                for (const [k, v] of Object.entries(obj)) {
+                    // Fields that are base64url in JSON become ArrayBuffer for the WebAuthn API.
+                    if ((k === 'challenge' || k === 'id' || k.endsWith('Id')) && typeof v === 'string') {
+                        decoded[k] = this._base64urlToBuffer(v);
+                    } else if (k === 'transports' && Array.isArray(v)) {
+                        decoded[k] = v;  // transports is an array of strings, keep as-is
+                    } else if (k === 'allowCredentials' && Array.isArray(v)) {
+                        decoded[k] = v.map(cred => ({
+                            ...cred,
+                            id: this._base64urlToBuffer(cred.id),
+                        }));
+                    } else if (k === 'credential' && typeof v === 'object' && v !== null) {
+                        // The `credential` field from register/complete input — keep as-is
+                        // (it's the browser's PublicKeyCredential which has ArrayBuffers).
+                        decoded[k] = v;
+                    } else {
+                        decoded[k] = this._decodePublicKey(v);
+                    }
+                }
+                return decoded;
+            }
+            return obj;
+        },
+
+        // Encode the browser's PublicKeyCredential response back to a JSON-safe
+        // object with base64url-encoded ArrayBuffer fields.
+        _encodeCredential(cred) {
+            const obj = {
+                id: cred.id,
+                type: cred.type,
+                rawId: this._bufferToBase64url(cred.rawId),
+                response: {},
+                clientExtensionResults: cred.getClientExtensionResults ? cred.getClientExtensionResults() : {},
+                authenticatorAttachment: cred.authenticatorAttachment || null,
+            };
+            const resp = cred.response;
+            if (resp.attestationObject) {
+                obj.response.attestationObject = this._bufferToBase64url(resp.attestationObject);
+            }
+            if (resp.clientDataJSON) {
+                obj.response.clientDataJSON = this._bufferToBase64url(resp.clientDataJSON);
+            }
+            if (resp.authenticatorData) {
+                obj.response.authenticatorData = this._bufferToBase64url(resp.authenticatorData);
+            }
+            if (resp.signature) {
+                obj.response.signature = this._bufferToBase64url(resp.signature);
+            }
+            if (resp.userHandle) {
+                obj.response.userHandle = this._bufferToBase64url(resp.userHandle);
+            }
+            return obj;
+        },
+
+        async loginWithPasskey() {
+            this.passkeyError = null;
+            this.passkeySuccess = null;
+            const username = this.loginForm.username.trim();
+            if (!username) {
+                this.passkeyError = 'Enter your username first, then click Login with Passkey.';
+                return;
+            }
+            this.passkeyBusy = true;
+            try {
+                // 1. Get assertion challenge from server
+                const startResp = await fetch('/api/v1/auth/webauthn/login/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username }),
+                });
+                if (!startResp.ok) {
+                    const err = await startResp.json().catch(() => ({}));
+                    throw new Error(err.message || err.error || `Passkey login start failed (${startResp.status})`);
+                }
+                const { challenge } = await startResp.json();
+
+                // 2. Decode challenge for the browser WebAuthn API
+                const publicKey = this._decodePublicKey(challenge);
+
+                // 3. Ask browser for the passkey assertion
+                const credential = await navigator.credentials.get({ publicKey });
+
+                // 4. Encode the credential back to JSON-safe format
+                const encoded = this._encodeCredential(credential);
+
+                // 5. Send to server for verification
+                const completeResp = await fetch('/api/v1/auth/webauthn/login/complete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, credential: encoded }),
+                });
+                if (!completeResp.ok) {
+                    const err = await completeResp.json().catch(() => ({}));
+                    throw new Error(err.message || err.error || `Passkey login failed (${completeResp.status})`);
+                }
+                const data = await completeResp.json();
+
+                // 6. Store JWT and proceed as normal login
+                this.token = data.token;
+                localStorage.setItem('moxui.token', data.token);
+                this.loginForm = { username: '', password: '' };
+                await this.fetchMe();
+                await this.fetchAll();
+                this.route = 'vms';
+                location.hash = '#/vms';
+            } catch (e) {
+                this.passkeyError = e.message || String(e);
+            } finally {
+                this.passkeyBusy = false;
+            }
+        },
+
+        async registerPasskey() {
+            this.passkeyError = null;
+            this.passkeySuccess = null;
+            this.passkeyBusy = true;
+            try {
+                // 1. Get creation challenge from server
+                const startResp = await this.api('/api/v1/auth/webauthn/register/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({}),
+                });
+                const { challenge } = await startResp.json();
+
+                // 2. Decode challenge for the browser WebAuthn API
+                const publicKey = this._decodePublicKey(challenge);
+
+                // 3. Ask browser to create a passkey
+                const credential = await navigator.credentials.create({ publicKey });
+
+                // 4. Encode the credential for JSON
+                const encoded = this._encodeCredential(credential);
+
+                // 5. Send to server for verification
+                const completeResp = await this.api('/api/v1/auth/webauthn/register/complete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ credential: encoded }),
+                });
+                await completeResp.json();
+
+                this.passkeySuccess = 'Passkey registered successfully!';
+                setTimeout(() => { this.passkeySuccess = null; }, 5000);
+            } catch (e) {
+                this.passkeyError = e.message || String(e);
+                setTimeout(() => { this.passkeyError = null; }, 5000);
+            } finally {
+                this.passkeyBusy = false;
             }
         },
 

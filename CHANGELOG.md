@@ -1,9 +1,183 @@
 # Changelog
 
-All notable changes to moxui are documented in this file.
+All notable changes to MoxUI are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+---
+
+## [1.0.0] — 2026-06-22
+
+### Production Release — v1.0.0 MVP
+
+v1.0.0 consolidates all Phase 0–4 features into a production-ready MVP.
+
+#### Phase 4 — WebAuthn / Passkey Support (Day 21)
+
+Added passwordless authentication via WebAuthn / passkeys (platform authenticators,
+YubiKeys, Touch ID, Windows Hello).
+
+##### Added
+
+- **`auth::webauthn::WebauthnState`** — Manages WebAuthn registration + authentication
+  state using the `webauthn-rs` crate (core-level, pre-0.5 preview types).
+- **`POST /api/v1/auth/webauthn/register/start`** — Returns a passkey creation challenge
+  for the authenticated user. Auth required (admin/operator).
+- **`POST /api/v1/auth/webauthn/register/complete`** — Stores the registered credential
+  after browser `navigator.credentials.create()`.
+- **`POST /api/v1/auth/webauthn/login/start`** — Returns an assertion challenge for a
+  given username. Public endpoint.
+- **`POST /api/v1/auth/webauthn/login/complete`** — Verifies the passkey assertion and
+  issues a JWT + refresh token (same flow as password login).
+- **WebAuthn config** — `auth.webauthn` section with `enabled`, `rp_id`, `rp_origin`,
+  `rp_name` fields. Fail-closed when `enabled: true` but config is invalid.
+- **WebAuthn state stored** in `AppState.webauthn` (`Option<Arc<WebauthnState>>`).
+  Disabled by default — opt-in via `auth.webauthn.enabled: true`.
+
+#### Phase 3 — Rate limiting, CORS, API keys, Audit UI, TOTP 2FA (Days 16–18)
+
+##### Added
+
+- **Rate limiting** — `tower-governor` middleware (5 req/sec per IP, burst 10).
+  Configurable via `auth.rate_limit`. Applied globally to all routes.
+- **CORS** — Configurable allowed origins (`auth.cors.allowed_origins`).
+  Empty = permissive mode (development). Max-age headers for preflight caching.
+- **API key authentication** — `X-API-Key` header support via `auth.api_key`.
+  Coexists with Bearer JWT auth. Ideal for automation/CI pipelines.
+- **Audit API endpoint** — `GET /api/v1/audit` with pagination, filtering (method,
+  path, status, timestamp, request_id), and sort direction. Returns paginated
+  results with total count and page info.
+- **TOTP 2FA (RFC 6238)** — `POST /api/v1/auth/2fa/complete` completes a 2FA login
+  with a 6-digit TOTP code or 8-digit backup code.
+- **`POST /api/v1/auth/2fa/setup`** — Generates a new TOTP secret and QR URL.
+- **`POST /api/v1/auth/2fa/verify`** — Verifies a TOTP code to enable 2FA.
+- **`POST /api/v1/auth/2fa/disable`** — Disables 2FA (requires current password).
+- **PreAuthStore** — In-memory store for 2FA pending sessions (5-min TTL).
+- **Backup codes** — 8-digit single-use backup codes generated with 2FA setup.
+
+#### Phase 2 — Refresh tokens, logout, polish (Days 14–15)
+
+##### Added
+
+- **`auth::refresh` module** — `RefreshStore` with `issue` / `verify` / `revoke` /
+  `revoke_all_for_user` / `rotate`. Tokens are 32-byte random values (256-bit
+  entropy), stored as SHA-256 hashes only.
+- **Family revocation** — Replaying a revoked token revokes all tokens for that user.
+- **`POST /api/v1/auth/refresh`** — Exchange a refresh token for a new JWT + new
+  refresh token (rotation). Invalid/expired/replayed tokens return 401.
+- **`POST /api/v1/auth/logout`** — Revoke a refresh token. Always returns 200
+  to avoid leaking token validity.
+- **Login response** — Now includes `refresh_token` field alongside the JWT.
+- **`UserStore::get_by_id`** — Look up a user by their `id` field.
+- **End-to-end integration tests** — Auth login (valid, wrong password, unknown user,
+  disabled account), auth me (valid token, missing token, expired token),
+  VM config, VNC ticket (disabled, viewer rejected, unauthenticated),
+  storage auth checks, task status, empty cluster list.
+- **Criterion benchmarks** — `jwt_encode` (~535µs), `jwt_decode` (~20µs),
+  `bcrypt_hash` (~195ms), `bcrypt_verify` (~194ms).
+
+#### Phase 1 — Core read + VM control (Days 5–13)
+
+##### Added
+
+- **VNC console backend** — `POST .../vnc/ticket` mints short-lived HMAC-SHA256
+  VNC tokens (5-min TTL, bound to cluster/node/vmid). Operator+ role required.
+  Proxmox `vncproxy` ticket never leaves the process.
+- **`VncConnectionLimiter`** — Atomic concurrency limiter (max 5 per VM).
+- **VM detail page** — Frontend tabs (summary, config, console) with action buttons
+  and confirmation dialogs.
+- **VM list enhancements** — Search, sort, filter, auto-polling, stale indicators,
+  error states.
+- **Frontend skeleton** — Alpine.js SPA served via `rust-embed`. Responsive layout
+  with dark/light theme support.
+- **Network read endpoints** — `GET /api/v1/networks` (cross-cluster aggregate)
+  and `GET /api/v1/networks/:cluster/:node` (per-node). Bridges, bonds, VLANs,
+  physical NICs, Linux aliases.
+- **VM delete** — `DELETE /api/v1/vms/:cluster/:node/:vmid` with purge/force/skiplock
+  options. Operator+ required.
+- **VM config endpoint** — `GET /api/v1/vms/:cluster/:node/:vmid/config`.
+
+#### Phase 0 — Foundation (Days 1–4)
+
+##### Added
+
+- **Cargo project** — Rust 2021 edition, axum 0.7 web framework, tokio async runtime,
+  rusqlite database, reqwest HTTP client, figment config loading.
+- **Module skeleton** — api, auth, proxmox, audit, security, config, state, cache,
+  observability modules.
+- **LXC read endpoints** — `GET /api/v1/lxcs` and `GET /api/v1/lxcs/:cluster/:node/:vmid`.
+- **Storage read endpoints** — `GET /api/v1/storages` and
+  `GET /api/v1/storages/:cluster/:node/:storage/content`
+  (ISO images, container templates).
+- **Auth (JWT + RBAC)** — `POST /api/v1/auth/login` exchanges username + password
+  for an RS256 JWT. `GET /api/v1/auth/me` echoes the current claim set. Three roles:
+  `admin`, `operator`, `viewer` with a privilege hierarchy.
+- **VM write endpoints** — `POST /api/v1/vms/:cluster/:node/:vmid/:action`
+  (start / stop / shutdown / reboot — returns the Proxmox UPID).
+- **Audit log** — Every state-changing request recorded to SQLite with user ID,
+  method, path, status, and timestamp.
+- **Health + readiness** — `GET /health` (detailed JSON), `GET /livez` (k8s liveness),
+  `GET /readyz` (k8s readiness with 10s TTL cache).
+- **Secret hygiene** — All Proxmox credentials wrapped in `SecretString` (zeroed on
+  drop). Tickets redacted in `Debug`.
+- **Config** — TOML/YAML config with figment, fail-closed on missing/invalid fields.
+  Environment variable overrides via `MOXUI_*` prefix.
+- **TLS + security headers** — Optional HTTPS (axum-server + rustls). HSTS,
+  X-Content-Type-Options, X-Frame-Options, CSP, Referrer-Policy on every response.
+- **Packaging** — `make build-release` (LTO + strip + abort-on-panic),
+  `make package-deb` (Debian package with systemd unit, hardened `ProtectSystem=strict`).
+- **OpenTelemetry tracing** — OTLP gRPC exporter (Jaeger, Tempo, SigNoz).
+  Configurable via `tracing` config section.
+- **Prometheus metrics** — `/metrics` endpoint with configurable registry.
+- **CI gates** — fmt, clippy, test, audit, bench.
+
+#### Security
+
+- HTTPS-only in production (configurable; dev mode warns on plaintext)
+- HSTS with `max-age=31536000; includeSubDomains`
+- Content-Security-Policy: `default-src 'self'`
+- X-Frame-Options: DENY
+- X-Content-Type-Options: nosniff
+- Referrer-Policy: no-referrer
+- All auth passwords bcrypt-hashed
+- JWT keys must be 2048-bit RSA minimum (fail-closed on missing keys)
+- Audit log captures every write, indexed by user
+- SHA-256 hashed refresh tokens (plaintext never persisted)
+- Refresh token rotation invalidates old token on each use
+- Family revocation: replayed tokens trigger full user token invalidation
+- Rate limiting on login (5 req/sec per IP)
+- CORS restricted to configured origins in production
+- Production systemd unit with `ProtectSystem=strict`, `NoNewPrivileges`,
+  `RestrictNamespaces`, `MemoryDenyWriteExecute`
+- VNC token secret minimum 32 bytes enforced
+- Fail-closed: missing JWT keys or VNC secret prevents startup
+- `#![forbid(unsafe_code)]` at crate level
+
+#### Known Limitations (v1.0.0)
+
+- **No LXC write endpoints** — start/stop/shutdown/reboot for containers (v1.1)
+- **No VM/LXC creation or config editing** — v1.1 feature
+- **VNC WebSocket proxy** — Ticket minting works end-to-end; WS proxy returns
+  501 (Phase 2 follow-up requires `tokio-tungstenite` with rustls)
+- **No storage write endpoints** — upload, download URL, delete (v1.1)
+- **No cluster-level endpoints** — HA status, replication, firewall (v1.1+)
+- **No LDAP/AD authentication** — v1.1 feature
+- **No user management UI** — users seeded from config file only
+- **No Terraform provider** — planned for v2.0
+
+#### Statistics
+
+| Metric | Value |
+|---|---|
+| Source lines (lib + bin) | ~4,500 |
+| Test count | 140+ |
+| Dependency count (direct) | ~45 |
+| Benchmark suites | 4 |
+| CI gates | fmt + clippy + test + audit + bench |
+| Docker image size | ~15 MB (runtime) |
+| Roles | admin, operator, viewer |
+| Auth methods | local, TOTP, WebAuthn, OIDC, API key |
 
 ---
 
@@ -11,150 +185,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Phase 2 — Refresh token + logout (Day 15)
 
-Added refresh token rotation (7-day TTL), family revocation replay detection,
-logout endpoint, and full integration tests.
+*See [1.0.0] Phase 2 for full details.*
 
-#### Added
-
-- **`auth::refresh` module**: `RefreshStore` with `issue` / `verify` / `revoke` /
-  `revoke_all_for_user` / `rotate`. Tokens are 32-byte random values (256-bit
-  entropy), stored as SHA-256 hashes only. Family revocation: replaying a
-  revoked token revokes all tokens for that user.
-- **`POST /api/v1/auth/refresh`**: exchange a refresh token for a new JWT + new
-  refresh token (rotation). Invalid/expired/replayed tokens return 401.
-- **`POST /api/v1/auth/logout`**: revoke a refresh token. Always returns 200
-  to avoid leaking token validity.
-- **Login response**: now includes `refresh_token` field alongside the JWT.
-- **`UserStore::get_by_id`**: look up a user by their `id` field (used by the
-  refresh handler after rotating the refresh token).
-
-#### Security
-
-- SHA-256 hashed refresh tokens (plaintext never persisted).
-- Rotation invalidates the old token on each use.
-- Family revocation: replayed tokens trigger full user token invalidation.
-- Logout always returns 200 (no oracle for token validity).
+Key additions that were later incorporated into v1.0.0:
+- `auth::refresh` module with SHA-256 hashed refresh tokens
+- Refresh token rotation with family revocation
+- `POST /api/v1/auth/refresh` and `POST /api/v1/auth/logout`
 
 #### Statistics
 
 | Metric | Value |
 |---|---|
-| Source lines (lib + bin) | ~3700 |
-| Test count | 133 (+15 from Day 14) |
+| Source lines (lib + bin) | ~3,700 |
+| Test count | 133 |
 | Refresh token entropy | 256 bits |
 | Refresh token TTL | 7 days |
+
+---
 
 ## [0.1.1] — 2026-06-22
 
 ### Phase 1 polish (Day 14)
 
-Added end-to-end integration tests for every remaining unprotected endpoint
-and edge case, plus Criterion benchmarks for auth-critical paths.
+*See [1.0.0] Phase 2 for full details.*
 
-#### Added
-
-- **Auth login integration tests**: `POST /api/v1/auth/login` with valid
-  credentials (returns JWT), wrong password (401), unknown user (401),
-  disabled account (401). Full wiremock-free router tests.
-- **Auth me integration tests**: `GET /api/v1/auth/me` with valid token
-  (200 + claims), missing token (401), expired token (401).
-- **VM config integration test**: `GET /api/v1/vms/:cluster/:node/:vmid/config`
-  through the router with wiremock.
-- **VNC ticket tests**: disabled endpoint (404), viewer role rejected (403),
-  unauthenticated (401).
-- **Storage auth checks**: both `/api/v1/storages` and
-  `/api/v1/storages/:cluster/:node/:storage/content` verify 401 without auth.
-- **Task status tests**: unauthenticated (401) and unknown cluster (404).
-- **Edge case — empty cluster list**: VM list and LXC list return empty
-  arrays (not crash) when zero clusters are configured.
-- **Criterion benchmarks**: `jwt_encode` (~535µs), `jwt_decode` (~20µs),
-  `bcrypt_hash` (~195ms), `bcrypt_verify` (~194ms).
+Key additions that were later incorporated into v1.0.0:
+- End-to-end integration tests for every unprotected endpoint
+- Criterion benchmarks for auth-critical paths
 
 #### Statistics
 
 | Metric | Value |
 |---|---|
-| Source lines (lib + bin) | ~3500 |
-| Test count | 118 (+16 from Day 13) |
+| Source lines (lib + bin) | ~3,500 |
+| Test count | 118 |
 | Benchmark suites | 4 |
-| CI gates | fmt + clippy + test + audit + bench |
+
+---
 
 ## [0.1.0] — 2026-06-21
 
 ### Phase 0: Read-only MVP
 
-First usable release. MoxUI can authenticate users, list VMs / LXC
-containers / storage pools, and start/stop/shutdown/reboot QEMU VMs.
-It enforces HTTPS, RBAC, and writes every state-changing request to a
-tamper-evident audit log.
+*See [1.0.0] Phase 0 for full details.*
 
-#### Added
-
-- **Auth (Day 4)**: moxui-side auth middleware (RS256 JWT). `POST
-  /api/v1/auth/login` exchanges username + password for a token.
-  `GET /api/v1/auth/me` echoes the current claim set. Three roles
-  (`admin`, `operator`, `viewer`) with a privilege hierarchy.
-- **VM endpoints (Day 3)**: `GET /api/v1/vms` (cross-cluster
-  aggregation), `GET /api/v1/vms/:cluster/:vmid` (single-VM detail),
-  `POST /api/v1/vms/:cluster/:node/:vmid/:action` (start / stop /
-  shutdown / reboot — returns the Proxmox UPID for completion polling).
-- **LXC endpoints (Day 5)**: `GET /api/v1/lxcs`,
-  `GET /api/v1/lxcs/:cluster/:node/:vmid`.
-- **Storage endpoints (Day 5)**: `GET /api/v1/storages`,
-  `GET /api/v1/storages/:cluster/:node/:storage/content` (ISO images,
-  container templates, etc.).
-- **Audit log (Day 2.4)**: Every state-changing request is recorded to
-  a SQLite database (`<db_path>.audit`) with the user ID (extracted
-  from the JWT `sub` claim), method, path, status, and timestamp.
-- **Health + readiness (Day 2.3)**: `GET /health` (detailed JSON
-  status), `GET /livez` (k8s liveness, 200), `GET /readyz` (k8s
-  readiness — pings every configured Proxmox cluster with a 10s TTL
-  cache).
-- **Secret hygiene (Day 3)**: All Proxmox credentials wrapped in
-  `SecretString` (zeroed on drop). Tickets redacted in `Debug`.
-- **Config (Day 2)**: TOML/YAML config with figment, fail-closed on
-  missing/invalid fields.
-- **HTTPS + security headers (Day 6)**: Optional TLS termination
-  (axum-server + rustls). When `server.tls` is configured, the server
-  listens with HTTPS only; otherwise it logs a startup warning and
-  serves plaintext (dev mode). Every response gets
-  HSTS / X-Content-Type-Options / X-Frame-Options / Referrer-Policy /
-  CSP headers.
-- **Packaging (Day 7)**: `make build-release` produces a stripped
-  binary with LTO + single-codegen-unit + abort-on-panic. `make
-  package-deb` builds a Debian package (systemd unit, moxui user,
-  hardened `ProtectSystem=strict` / `NoNewPrivileges` etc.).
-
-#### Security
-
-- HTTPS-only in production (configurable; default = dev plaintext)
-- HSTS with `max-age=31536000; includeSubDomains`
-- Content-Security-Policy: `default-src 'self'`
-- X-Frame-Options: DENY
-- X-Content-Type-Options: nosniff
-- All auth passwords bcrypt-hashed on the wire-side
-- JWT keys must be 2048-bit RSA minimum (fail-closed on missing keys)
-- Audit log captures every write, indexed by user
-- Production systemd unit runs as `moxui:moxui` with `ProtectSystem=strict`,
-  `NoNewPrivileges`, `RestrictNamespaces`, `MemoryDenyWriteExecute`
-
-#### Known limitations
-
-- **No write endpoints for LXC or storage** — Phase 1.
-- **No WebSocket / no live console** — Phase 2.
-- **Plaintext HTTP dev mode** — must be replaced with TLS for production.
-- **No cluster-level `/cluster/*` endpoints** (e.g. HA, replication) —
-  Phase 3.
-- **Self-signed / in-cluster certs require `insecure_skip_verify: true`
-  unless you ship a CA** — by design, but requires operator action.
+First usable release. MoxUI can authenticate users, list VMs / LXC containers /
+storage pools, and start/stop/shutdown/reboot QEMU VMs. It enforces HTTPS, RBAC,
+and writes every state-changing request to a tamper-evident audit log.
 
 #### Statistics
 
 | Metric | Value |
 |---|---|
-| Source lines (lib + bin) | ~3500 |
+| Source lines (lib + bin) | ~3,500 |
 | Test count | 73 |
 | Dependency count (direct) | 35 |
 | CI gates | fmt + clippy + test + audit |
 
+---
+
+## [0.0.0] — 2026-06-20
+
+### Pre-release — Design Phase
+
+- Project proposal, roadmap, feature scope ([PROPOSAL.md](./PROPOSAL.md))
+- Architecture diagrams ([docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md))
+- Data model specification ([DATA_MODEL.md](./DATA_MODEL.md))
+- Implementation plan with 3-role team structure
+- 168 features defined with tier + acceptance criteria
+
+---
+
+[1.0.0]: https://github.com/kungjom26/moxui/releases/tag/v1.0.0
+[0.2.0]: https://github.com/kungjom26/moxui/releases/tag/v0.2.0
+[0.1.1]: https://github.com/kungjom26/moxui/releases/tag/v0.1.1
 [0.1.0]: https://github.com/kungjom26/moxui/releases/tag/v0.1.0

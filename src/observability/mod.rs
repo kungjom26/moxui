@@ -1,13 +1,8 @@
 //! Observability (metrics + tracing exporters).
+//!
+//! - `metrics`: Prometheus RED + USE metric definitions, a [`MetricsLayer`]
+//!   Tower middleware, and the [`MetricsService`] handle.
+//! - `tracing`: OpenTelemetry OTLP exporter setup with [`TracingConfig`].
 
-// TODO: implement
-// - Prometheus collectors (RED + USE metrics)
-// - OpenTelemetry OTLP exporter
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn test_placeholder() {
-        // observability module is a placeholder
-    }
-}
+pub mod metrics;
+pub mod tracing;

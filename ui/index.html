@@ -27,6 +27,13 @@
                 <span x-show="!loggingIn">Sign in</span>
                 <span x-show="loggingIn">Signing in…</span>
             </button>
+            <p class="muted" style="margin: 0.75rem 0 0; text-align: center; border-top: 1px solid var(--border); padding-top: 0.75rem;">
+                <a href="#" @click.prevent="loginWithPasskey()" :class="{ muted: passkeyBusy }" style="text-decoration: underline; cursor: pointer;">
+                    <span x-show="!passkeyBusy">🔑 Login with Passkey</span>
+                    <span x-show="passkeyBusy">Authenticating…</span>
+                </a>
+            </p>
+            <p class="error" x-show="passkeyError" x-text="passkeyError" style="margin-top: 0.25rem;"></p>
         </form>
     </main>
 
@@ -46,7 +53,10 @@
                 <span x-text="theme === 'dark' ? '☀' : '🌙'"></span>
             </button>
             <span class="user" x-text="user?.username + ' (' + user?.role + ')'"></span>
+            <button class="link" @click="registerPasskey()" title="Register a passkey for passwordless login" x-show="!passkeyBusy">🔑 Passkey</button>
+            <button class="link" disabled x-show="passkeyBusy">Registering…</button>
             <button class="link" @click="logout()">Sign out</button>
+            <p class="error" x-show="passkeySuccess" x-text="passkeySuccess" style="margin: 0; font-size: 0.8rem;"></p>
         </header>
 
         <!-- VM list view (Day 11 — search/sort/filter/polling/stale/error). -->

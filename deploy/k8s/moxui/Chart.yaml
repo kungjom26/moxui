@@ -1,0 +1,26 @@
+apiVersion: v2
+name: moxui
+description: A Helm chart for deploying MoxUI on Kubernetes — a modern Rust/axum web UI for Proxmox VE
+type: application
+
+# Chart version — increment when chart resources change
+version: 0.1.0
+
+# Application version — matches the MoxUI release
+appVersion: "0.1.0"
+
+home: https://github.com/kungjom26/moxui
+sources:
+  - https://github.com/kungjom26/moxui
+keywords:
+  - proxmox
+  - hypervisor
+  - kvm
+  - virtualization
+  - rust
+  - axum
+maintainers:
+  - name: MoxUI Team
+    email: hello@moxui.io
+    url: https://github.com/kungjom26/moxui
+icon: https://raw.githubusercontent.com/kungjom26/moxui/main/ui/static/favicon.ico

@@ -72,6 +72,13 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 # Metrics
 prometheus = "0.14"
 
+# OpenTelemetry Tracing
+opentelemetry = { version = "0.27", features = ["trace"] }
+opentelemetry-otlp = { version = "0.27", features = ["trace"] }
+opentelemetry_sdk = { version = "0.27", features = ["trace", "rt-tokio"] }
+tracing-opentelemetry = "0.28"
+once_cell = "1"
+
 # Config
 figment = { version = "0.10", features = ["env", "toml", "yaml"] }
 
@@ -100,6 +107,7 @@ governor = "0.10"
 webauthn-rs = "0.5"
 axum-server = { version = "0.7.2", default-features = false, features = ["tls-rustls"] }
 tokio-rustls = "0.26.4"
+openidconnect = { version = "4.0.1", features = ["reqwest"] }
 
 [dev-dependencies]
 tokio-test = "0.4"

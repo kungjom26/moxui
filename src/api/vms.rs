@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     Json,
 };
 use serde::{Deserialize, Serialize};
@@ -17,6 +17,15 @@ use crate::auth::{require_role, AuthContext, Role};
 use crate::error::{AppError, AppResult};
 use crate::proxmox::types::VmResource;
 use crate::state::AppState;
+
+/// Optional search query for `GET /api/v1/vms`.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct VmsQuery {
+    /// Filter VM names by this substring (case-insensitive contains match).
+    /// When absent, all VMs are returned.
+    #[serde(default)]
+    pub search: Option<String>,
+}
 
 /// One VM row in the aggregate response, tagged with the cluster it came from.
 #[derive(Debug, Clone, Serialize)]
@@ -74,7 +83,13 @@ pub struct VmsResponse {
 }
 
 /// `GET /api/v1/vms` — list VMs across every configured Proxmox cluster.
-pub async fn list_vms(State(state): State<AppState>) -> Json<VmsResponse> {
+///
+/// Supports an optional `?search=foo` query parameter that filters
+/// results to VMs whose name contains the search string (case-insensitive).
+pub async fn list_vms(
+    State(state): State<AppState>,
+    Query(query): Query<VmsQuery>,
+) -> Json<VmsResponse> {
     use futures_util::future::join_all;
 
     let futs = state.clients().map(|c| {
@@ -98,6 +113,12 @@ pub async fn list_vms(State(state): State<AppState>) -> Json<VmsResponse> {
                 errors.insert(name, e.to_string());
             }
         }
+    }
+
+    // Apply optional search filter (case-insensitive name contains match).
+    if let Some(ref search) = query.search {
+        let lower_search = search.to_lowercase();
+        vms.retain(|row| row.name.to_lowercase().contains(&lower_search));
     }
 
     Json(VmsResponse { vms, errors })
@@ -422,6 +443,7 @@ mod list_vms_contract_tests {
             },
             clusters: vec![],
             auth: AuthConfig::default(),
+            tracing: crate::observability::tracing::TracingConfig::default(),
         };
         let priv_pem = include_bytes!("../../tests/fixtures/test_jwt_priv.pem");
         let pub_pem = include_bytes!("../../tests/fixtures/test_jwt_pub.pem");
@@ -432,6 +454,8 @@ mod list_vms_contract_tests {
             audit,
             jwt,
             UserStore::new(),
+            None,
+            None,
             None,
             None,
         );
@@ -670,6 +694,7 @@ mod vm_config_contract_tests {
             },
             clusters: vec![],
             auth: AuthConfig::default(),
+            tracing: crate::observability::tracing::TracingConfig::default(),
         };
         let priv_pem = include_bytes!("../../tests/fixtures/test_jwt_priv.pem");
         let pub_pem = include_bytes!("../../tests/fixtures/test_jwt_pub.pem");
@@ -680,6 +705,8 @@ mod vm_config_contract_tests {
             audit,
             jwt,
             UserStore::new(),
+            None,
+            None,
             None,
             None,
         );

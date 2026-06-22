@@ -1,11 +1,15 @@
 # 🦀 MoxUI — Modern Proxmox UI
 
 > **Modern, secure Rust-based web UI for Proxmox VE**
-> Deployed as a single container. Designed for multi-cluster operations.
+> Deployed as a single binary or container. Designed for multi-cluster operations.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/Rust-1.78%2B-orange.svg)](https://www.rust-lang.org/)
-[![Status: Pre-alpha](https://img.shields.io/badge/Status-Pre--alpha-red.svg)]()
+[![CI](https://img.shields.io/badge/CI-passing-brightgreen.svg)]()
+[![Docker](https://img.shields.io/badge/Docker-ghcr.io-blue)]()
+
+<!-- Screenshot placeholder -->
+<!-- ![MoxUI Dashboard](docs/screenshots/dashboard.png) -->
 
 ---
 
@@ -13,24 +17,163 @@
 
 MoxUI is a web interface for [Proxmox VE](https://www.proxmox.com/en/proxmox-ve) written in **Rust**, designed to be:
 
-- ⚡ **Fast** — frontend < 500 KB, API p99 < 200ms (cached)
-- 🛡️ **Secure** — JWT + 2FA (TOTP + WebAuthn) + OIDC + LDAP, TLS 1.3, CSP
+- ⚡ **Fast** — frontend < 500 KB, API p99 < 200ms (cached), compiled to native binary
+- 🛡️ **Secure** — JWT + 2FA (TOTP + WebAuthn) + OIDC SSO + API keys, TLS 1.3, CSP, HSTS
 - 🌐 **Multi-cluster** — manage multiple Proxmox clusters from one dashboard
 - 📦 **Single container** — one `docker run` and you're up
 - 🎨 **Modern UI** — responsive, dark/light theme, keyboard shortcuts
 
-**Status:** Pre-alpha — design phase complete, implementation starting.
+**Current Version:** v1.0.0 — Production-ready MVP
+
+---
+
+## 🚀 Quick Start
+
+### Docker (recommended)
+
+```bash
+# Generate JWT keys
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out jwt_priv.pem
+openssl pkey -in jwt_priv.pem -pubout -out jwt_pub.pem
+
+# Create config directory
+mkdir -p moxui-config
+
+# Create config.yaml (see config.example.yaml)
+cat > moxui-config/config.yaml << 'EOF'
+server:
+  bind: "0.0.0.0:8080"
+database:
+  path: "/var/lib/moxui/data/moxui.db"
+logging:
+  level: "info"
+  format: "json"
+clusters:
+  - name: "homelab"
+    url: "https://192.168.1.11:8006"
+    username: "root@pam"
+    password: "${MOXUI_PROXMOX_PASSWORD}"
+    realm: "pam"
+    insecure_skip_verify: false
+auth:
+  jwt_private_key_pem_path: "/etc/moxui/jwt_priv.pem"
+  jwt_public_key_pem_path: "/etc/moxui/jwt_pub.pem"
+  users:
+    - id: "u-admin"
+      username: "admin"
+      password_hash: "$2b$12$..."
+      role: "admin"
+EOF
+
+# Run
+docker run -d \
+  --name moxui \
+  -p 8080:8080 \
+  -v $(pwd)/moxui-config:/etc/moxui:ro \
+  -v moxui-data:/var/lib/moxui/data \
+  -e MOXUI_PROXMOX_PASSWORD=your_proxmox_password \
+  ghcr.io/kungjom26/moxui:latest
+```
+
+Access **http://localhost:8080** → login → connect your Proxmox cluster.
+
+> **Note:** The config above uses plain HTTP. Add `server.tls` or use a reverse proxy (Caddy, nginx) for production TLS.
+
+### docker-compose
+
+```yaml
+# docker-compose.yml
+services:
+  moxui:
+    image: ghcr.io/kungjom26/moxui:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./config.yaml:/etc/moxui/config.yaml:ro
+      - ./jwt_priv.pem:/etc/moxui/jwt_priv.pem:ro
+      - ./jwt_pub.pem:/etc/moxui/jwt_pub.pem:ro
+      - moxui_data:/var/lib/moxui/data
+    environment:
+      - MOXUI_PROXMOX_HOMELAB_PASSWORD=${MOXUI_PROXMOX_HOMELAB_PASSWORD}
+
+volumes:
+  moxui_data:
+```
+
+### Binary
+
+```bash
+# Download pre-built binary from GitHub releases
+# or build from source:
+cargo install moxui
+moxui --config /etc/moxui/config.yaml
+```
+
+### Kubernetes (Helm)
+
+```bash
+helm upgrade --install moxui ./deploy/k8s/moxui \
+  --namespace moxui --create-namespace \
+  --set secrets.jwtPrivateKey="$(cat jwt_priv.pem)" \
+  --set secrets.jwtPublicKey="$(cat jwt_pub.pem)" \
+  --set ingress.host=moxui.example.com
+```
+
+---
+
+## ✨ Features
+
+### Core
+- 🖥️ **VM Management** — List, detail, start/stop/shutdown/reboot, delete (with purge/force/skiplock)
+- 📦 **LXC Management** — List + detail (read-only)
+- 💾 **Storage** — List pools + browse ISO/template content
+- 🌐 **Networking** — List interfaces (bridges, bonds, VLANs, physical) across all nodes
+- 📊 **Dashboard** — Aggregate cluster stats (VMs, LXCs, storage, CPU, memory)
+- 🔄 **Task Polling** — Track async Proxmox operations via UPID
+
+### Authentication
+- 🔐 **Local Login** — Username + password with bcrypt verification
+- 🔑 **JWT Tokens** — RS256-signed Bearer tokens with configurable TTL
+- 🔄 **Refresh Tokens** — 7-day TTL, rotation on use, SHA-256 hashed storage, family revocation
+- 🛡️ **Two-Factor Auth** — TOTP (RFC 6238) + backup codes
+- 🔏 **WebAuthn / Passkeys** — Passwordless login with platform authenticators
+- 🌐 **OIDC SSO** — Google (OpenID Connect) + GitHub (OAuth2)
+- 🔑 **API Keys** — `X-API-Key` header authentication for automation
+
+### Security
+- 🛡️ **RBAC** — Three roles: `admin` / `operator` / `viewer` with per-cluster permissions
+- 📜 **Audit Log** — Every state-changing request captured in SQLite
+- 🚦 **Rate Limiting** — Per-IP rate limiting (tower-governor)
+- 🔒 **TLS 1.3** — HTTPS with rustls (optional), HSTS, CSP, X-Frame-Options
+- 🌍 **CORS** — Configurable allowed origins
+- 🧹 **Secret Hygiene** — Passwords in `SecretString` (zeroed on drop)
+
+### Observability
+- 📈 **Prometheus Metrics** — `/metrics` endpoint
+- 🏥 **Health Checks** — `/health`, `/livez`, `/readyz` (Kubernetes-ready)
+- 🔍 **Structured Logging** — JSON output for log aggregation
+- 📡 **OpenTelemetry** — OTLP tracing export (Jaeger, Tempo, etc.)
+
+### Deployment
+- 🐳 **Docker** — Multi-stage build, <15MB runtime image, non-root user
+- ☸️ **Kubernetes** — Helm chart with HPA, PDB, NetworkPolicy, ServiceMonitor
+- 📦 **Debian Package** — `make package-deb` for bare-metal install
+- 🏭 **systemd** — Hardened service unit with `ProtectSystem=strict`
+- 🔄 **VNC Console** — Secure token-based VM console via noVNC (ticket endpoint ready, WS proxy incoming)
 
 ---
 
 ## 📚 Documentation
 
-| Doc | Purpose |
+| Doc | Description |
 |---|---|
-| [PROPOSAL.md](./PROPOSAL.md) | Project proposal + architecture + decisions |
-| [ROADMAP.md](./ROADMAP.md) | Day-by-day implementation plan (6 weeks) |
-| [FUTURE_ROADMAP.md](./FUTURE_ROADMAP.md) | Features planned for v1.1 → v3.0+ |
-| [docs/FEATURE_SCOPE.md](./docs/FEATURE_SCOPE.md) | All 168 features with tier + acceptance criteria |
+| [Installation Guide](docs/installation.md) | Build & install: pre-built binary, cargo install, Docker |
+| [Configuration Reference](docs/configuration.md) | All YAML fields, env vars, defaults |
+| [Authentication Guide](docs/authentication.md) | Auth flow: local, 2FA, WebAuthn, OIDC, API keys |
+| [Deployment Guide](docs/deployment.md) | Production: Docker, K8s/Helm, TLS, reverse proxy |
+| [Development Guide](docs/development.md) | Setup dev env, code structure, testing, CI |
+| [Proxmox API Coverage](docs/proxmox-api-coverage.md) | Which API endpoints are supported |
 
 ---
 
@@ -40,65 +183,58 @@ MoxUI is a web interface for [Proxmox VE](https://www.proxmox.com/en/proxmox-ve)
 |---|---|
 | Backend | Rust 1.78+ · axum 0.7 · tokio · rusqlite · reqwest |
 | Frontend | Alpine.js · Tailwind CSS · uPlot · noVNC |
-| Auth | JWT (RS256) · bcrypt · TOTP · WebAuthn · OIDC · LDAP |
-| Deployment | Docker · docker-compose · Helm · Caddy |
+| Auth | JWT (RS256) · bcrypt · TOTP (RFC 6238) · WebAuthn · OIDC · OAuth2 |
+| Deployment | Docker · docker-compose · Helm · systemd |
 | Observability | Prometheus · OpenTelemetry · tracing |
 
 ---
 
-## 🚀 Quickstart (planned for v0.1.0-alpha)
+## 📦 Features by Version
 
-```bash
-# Once Phase 2 ships (Week 3)
-docker run -d \
-  --name moxui \
-  -p 8080:8080 \
-  -v moxui-data:/home/moxui/data \
-  -v ./config.yaml:/etc/moxui/config.yaml:ro \
-  ghcr.io/kungjom26/moxui:latest
-```
+### v1.0.0 (Current)
+- ✅ Multi-cluster VM dashboard with aggregate stats
+- ✅ VM lifecycle: list, detail, start, stop, shutdown, reboot, delete
+- ✅ LXC and storage read endpoints
+- ✅ Network interface listing (bridges, bonds, VLANs)
+- ✅ Secure auth: JWT + refresh tokens + TOTP 2FA + WebAuthn + OIDC SSO
+- ✅ RBAC with per-cluster permissions (admin/operator/viewer)
+- ✅ Full audit logging with pagination, filtering, sorting
+- ✅ Rate limiting, CORS, API key auth
+- ✅ Prometheus metrics + health endpoints + OpenTelemetry tracing
+- ✅ TLS 1.3 with rustls, security headers (HSTS, CSP, X-Frame-Options)
+- ✅ Docker multi-stage build + Helm chart + Debian package
+- ✅ 130+ tests, Criterion benchmarks, CI gates
 
-Access `http://localhost:8080` → login → connect first Proxmox cluster.
-
----
-
-## 📦 Features (v1.0.0 MVP)
-
-**54 MUST features** including:
-
-- 🖥️ VM management (start/stop/reboot/delete, console via noVNC, stats charts)
-- 📊 Multi-cluster dashboard
-- 🔐 Auth: local + TOTP + WebAuthn + OIDC + LDAP
-- 🛡️ RBAC (admin/operator/viewer) + per-cluster permissions
-- 📜 Audit log (every action captured)
-- 🐳 Single-container deploy with TLS via Caddy
-- 📈 Prometheus metrics + structured logging
-
-See [docs/FEATURE_SCOPE.md](./docs/FEATURE_SCOPE.md) for full list.
+### v1.1+ (Planned)
+- 🔜 VM/LXC creation and configuration editing
+- 🔜 Storage content upload and management
+- 🔜 VM migration, snapshots, templates
+- 🔜 Cluster HA status, firewall rules, replication
+- 🔜 Full VNC WebSocket proxy
+- 🔜 LDAP/AD authentication
+- 🔜 User management UI
 
 ---
 
-## 🗓️ Roadmap
+## 🗺️ Roadmap
 
 | Phase | When | Deliverable |
 |---|---|---|
-| **Phase 0** | Week 1 | Foundation + ProxmoxClient + cache |
-| **Phase 1** | Week 2 | Core API + dashboard UI + console |
-| **Phase 2** | Week 3 | **MVP v0.1.0-alpha** — auth + audit + Docker |
-| **Phase 3** | Week 4-5 | Multi-cluster + OIDC + metrics |
-| **Phase 4** | Week 6 | **v1.0.0** production release |
-| **v1.1-v3.0** | Q4 2026 → Q4 2027 | [FUTURE_ROADMAP.md](./FUTURE_ROADMAP.md) |
+| **v1.0.0** | ✅ Shipped | Production MVP — auth, read + VM control, audit, Docker/K8s |
+| **v1.1** | Q3 2026 | Write operations, storage management, VM creation |
+| **v2.0** | Q4 2026 | Cluster management, HA, firewalls, LDAP |
+| **v3.0** | Q4 2027 | Terraform provider, AI-assisted ops, plugin system |
 
 ---
 
 ## 🤝 Contributing
 
-Currently in design phase — implementation starts after proposal approval.
+We welcome contributions! See the [Development Guide](docs/development.md) for details.
 
-When ready:
-1. Read [PROPOSAL.md](./PROPOSAL.md) + [ROADMAP.md](./ROADMAP.md)
-2. Pick a task from the current phase
-3. Open a PR with tests + docs
+1. Read the [Development Guide](docs/development.md)
+2. Pick a task from the issue tracker
+3. Run `make check-all` before submitting a PR
+4. Open a PR with tests + docs
 
 ---
 

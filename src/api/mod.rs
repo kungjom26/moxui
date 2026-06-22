@@ -2,6 +2,7 @@
 
 pub mod audit;
 pub mod auth;
+pub mod dashboard;
 pub mod health;
 pub mod lxcs;
 pub mod networks;
@@ -9,6 +10,7 @@ pub mod storages;
 pub mod tasks;
 pub mod vms;
 pub mod vnc;
+pub mod webauthn;
 
 use axum::{
     middleware::from_fn_with_state,
@@ -16,13 +18,14 @@ use axum::{
     Router,
 };
 
-use crate::auth::require_auth;
+use crate::auth::{require_auth, require_cluster_access};
 use crate::security::{cors_layer, RateLimitLayer};
 use crate::state::AppState;
 
 /// Build the main API router with auth + audit middleware applied.
 ///
 /// Routes:
+/// - `GET  /metrics`                         — Prometheus metrics (before auth)
 /// - `GET  /health`                          — detailed health JSON
 /// - `GET  /livez`                           — k8s liveness
 /// - `GET  /readyz`                          — k8s readiness (Proxmox ping)
@@ -39,32 +42,64 @@ use crate::state::AppState;
 pub fn router(state: AppState) -> Router {
     // Public routes — no auth required.
     let public = Router::new()
+        .route("/metrics", get(health::metrics_handler))
         .route("/health", get(health::health))
         .route("/livez", get(health::livez))
         .route("/readyz", get(health::readyz))
         .route("/api/v1/auth/login", post(auth::login))
         .route("/api/v1/auth/refresh", post(auth::refresh))
         .route("/api/v1/auth/logout", post(auth::logout))
-        .route("/api/v1/auth/2fa/complete", post(auth::two_factor_complete));
+        .route("/api/v1/auth/2fa/complete", post(auth::two_factor_complete))
+        .route("/api/v1/auth/oidc/login", post(auth::oidc_login))
+        .route("/api/v1/auth/oidc/callback", post(auth::oidc_callback))
+        .route(
+            "/api/v1/auth/webauthn/login/start",
+            post(webauthn::login_start),
+        )
+        .route(
+            "/api/v1/auth/webauthn/login/complete",
+            post(webauthn::login_complete),
+        );
 
     // Authenticated routes — require a valid Bearer token.
+    // These are routes without `:cluster` path params (no per-cluster check needed).
     let protected = Router::new()
         .route("/api/v1/auth/me", get(auth::me))
+        .route("/api/v1/dashboard", get(dashboard::dashboard))
         .route("/api/v1/audit", get(audit::list_audit))
         .route("/api/v1/vms", get(vms::list_vms))
+        .route("/api/v1/lxcs", get(lxcs::list_lxcs))
+        .route("/api/v1/storages", get(storages::list_storages))
+        .route("/api/v1/networks", get(networks::list_networks))
+        .route("/api/v1/auth/2fa/setup", post(auth::two_factor_setup))
+        .route("/api/v1/auth/2fa/verify", post(auth::two_factor_verify))
+        .route("/api/v1/auth/2fa/disable", post(auth::two_factor_disable))
+        .route(
+            "/api/v1/auth/webauthn/register/start",
+            post(webauthn::register_start),
+        )
+        .route(
+            "/api/v1/auth/webauthn/register/complete",
+            post(webauthn::register_complete),
+        )
+        .route_layer(from_fn_with_state(state.clone(), require_auth));
+
+    // Cluster-scoped routes — require auth + cluster-level permissions.
+    // These all carry a `:cluster` path parameter. The require_cluster_access
+    // middleware checks that the user is allowed to access the named cluster.
+    // NOTE: route_layer wraps inside-out, so require_auth (inner) runs first,
+    // then require_cluster_access (outer) — exactly what we need.
+    let cluster_scoped = Router::new()
         .route("/api/v1/vms/:cluster/:vmid", get(vms::vm_detail))
         .route(
             "/api/v1/vms/:cluster/:node/:vmid/:action",
             post(vms::vm_action_handler),
         )
-        .route("/api/v1/lxcs", get(lxcs::list_lxcs))
         .route("/api/v1/lxcs/:cluster/:node/:vmid", get(lxcs::lxc_detail))
-        .route("/api/v1/storages", get(storages::list_storages))
         .route(
             "/api/v1/storages/:cluster/:node/:storage/content",
             get(storages::storage_content),
         )
-        .route("/api/v1/networks", get(networks::list_networks))
         .route(
             "/api/v1/networks/:cluster/:node",
             get(networks::node_networks),
@@ -77,9 +112,6 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/tasks/:cluster/:node/:upid",
             get(tasks::task_status),
         )
-        .route("/api/v1/auth/2fa/setup", post(auth::two_factor_setup))
-        .route("/api/v1/auth/2fa/verify", post(auth::two_factor_verify))
-        .route("/api/v1/auth/2fa/disable", post(auth::two_factor_disable))
         .route(
             "/api/v1/vms/:cluster/:node/:vmid/vnc/ticket",
             post(vnc::vnc_ticket_handler),
@@ -88,10 +120,13 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/vms/:cluster/:node/:vmid/vnc/ws",
             get(vnc::vnc_ws_handler),
         )
+        // require_auth runs first (inner), require_cluster_access runs second (outer).
+        .route_layer(from_fn_with_state(state.clone(), require_cluster_access))
         .route_layer(from_fn_with_state(state.clone(), require_auth));
 
     public
         .merge(protected)
+        .merge(cluster_scoped)
         .merge(crate::ui::router::<crate::state::AppState>())
         .layer(from_fn_with_state(
             state.clone(),

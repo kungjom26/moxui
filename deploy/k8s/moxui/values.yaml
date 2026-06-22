@@ -1,0 +1,190 @@
+# ── MoxUI Helm Chart — Default values ─────────────────────────────────
+# Override these in a custom values file or via --set flags.
+# ─────────────────────────────────────────────────────────────────────
+
+# ── Image ────────────────────────────────────────────────────────────
+image:
+  repository: ghcr.io/kungjom26/moxui
+  tag: latest
+  pullPolicy: Always
+
+# ── Replicas ─────────────────────────────────────────────────────────
+replicaCount: 2
+
+# ── Service ──────────────────────────────────────────────────────────
+service:
+  type: ClusterIP
+  port: 8080
+  name: http
+
+# ── Ingress ──────────────────────────────────────────────────────────
+ingress:
+  enabled: true
+  className: nginx
+  host: moxui.example.com
+  tls:
+    enabled: true
+    secretName: moxui-tls
+    # clusterIssuer: letsencrypt-prod  # cert-manager issuer (optional)
+
+# ── MoxUI Config (mounted as ConfigMap) ──────────────────────────────
+config:
+  server:
+    bind: "0.0.0.0:8080"
+    workers: 0
+  database:
+    path: "/var/lib/moxui/data/moxui.db"
+    max_connections: 8
+    run_migrations: true
+  logging:
+    level: "info"
+    format: "json"
+
+# ── Proxmox Clusters (via environment + secrets) ─────────────────────
+# Cluster credentials are mounted from a Secret.
+# Define the cluster list here, passwords come from the secret.
+clusters:
+  - name: "homelab"
+    url: "https://192.168.1.11:8006"
+    username: "root@pam"
+    realm: "pam"
+    insecure_skip_verify: true
+  # - name: "production"
+  #   url: "https://pve.example.com:8006"
+  #   username: "proxui@pve"
+  #   realm: "pve"
+  #   insecure_skip_verify: false
+
+# ── Existing Secret Reference ────────────────────────────────────────
+# If you already have a Kubernetes Secret containing cluster passwords,
+# JWT keys, and OIDC secrets, reference it here.
+# When set to "", the chart creates a new Secret from .Values.secrets.
+existingSecret: ""
+
+# ── Secrets (only used if existingSecret is empty) ───────────────────
+secrets:
+  # Cluster passwords — one per cluster, referenced by index
+  clusterPasswords:
+    - "changeme-homelab-password"
+  # JWT keys — generate with:
+  #   openssl genpkey -algorithm Ed25519 -out jwt_priv.pem
+  #   openssl pkey -in jwt_priv.pem -pubout -out jwt_pub.pem
+  jwtPrivateKey: |-
+    # -----BEGIN PRIVATE KEY-----
+    # (your Ed25519 private key here)
+    # -----END PRIVATE KEY-----
+  jwtPublicKey: |-
+    # -----BEGIN PUBLIC KEY-----
+    # (your Ed25519 public key here)
+    # -----END PUBLIC KEY-----
+  # OIDC (optional)
+  oidcClientId: ""
+  oidcClientSecret: ""
+  # Session / encryption keys
+  encryptionKey: ""  # 32-byte hex key for ChaCha20Poly1305
+
+# ── Prometheus ServiceMonitor ────────────────────────────────────────
+serviceMonitor:
+  enabled: true
+  interval: 30s
+  scrapeTimeout: 10s
+  labels: {}
+  #  release: prometheus
+
+# ── Horizontal Pod Autoscaler ───────────────────────────────────────
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 75
+  targetMemoryUtilizationPercentage: 80
+
+# ── PodDisruptionBudget ──────────────────────────────────────────────
+pdb:
+  enabled: true
+  minAvailable: 1
+
+# ── NetworkPolicy ────────────────────────────────────────────────────
+networkPolicy:
+  enabled: true
+  # Extra CIDRs to allow ingress from (e.g., monitoring, CI)
+  extraIngressCIDRs: []
+  #   - 10.0.0.0/8
+
+# ── Resource Limits ──────────────────────────────────────────────────
+resources:
+  requests:
+    cpu: 250m
+    memory: 256Mi
+  limits:
+    cpu: 1000m
+    memory: 512Mi
+
+# ── Node Selector / Tolerations / Affinity ───────────────────────────
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# ── Pod Security Context ─────────────────────────────────────────────
+# Runs as non-root user 10001 (matches Dockerfile moxui user)
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+
+# ── Container Security Context ───────────────────────────────────────
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# ── ServiceAccount ───────────────────────────────────────────────────
+serviceAccount:
+  create: true
+  name: moxui
+  annotations: {}
+  #  eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/moxui
+
+# ── Persistent Volume ────────────────────────────────────────────────
+# For the SQLite database file
+persistence:
+  enabled: true
+  size: 1Gi
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+  annotations: {}
+
+# ── Probes ───────────────────────────────────────────────────────────
+livenessProbe:
+  httpGet:
+    path: /livez
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 30
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 15
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+# ── Environment Variables ────────────────────────────────────────────
+# Extra env vars to inject (e.g., RUST_LOG, MOXUI_* overrides)
+extraEnv: []
+#  - name: RUST_LOG
+#    value: debug
+#  - name: MOXUI_LOGGING__LEVEL
+#    value: debug
+
+# ── Extra Volumes / Mounts ───────────────────────────────────────────
+extraVolumes: []
+extraVolumeMounts: []

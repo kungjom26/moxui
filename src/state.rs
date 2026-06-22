@@ -10,9 +10,11 @@ use secrecy::SecretBox;
 use tokio::sync::{Mutex, RwLock};
 
 use crate::audit::AuditStore;
+use crate::auth::oidc::OidcService;
 use crate::auth::webauthn::WebauthnState;
-use crate::auth::{JwtService, PreAuthStore, RefreshStore, UserStore};
+use crate::auth::{JwtService, PreAuthStore, RefreshStore, User, UserStore};
 use crate::config::Config;
+use crate::observability::metrics::MetricsService;
 use crate::proxmox::ProxmoxClient;
 
 /// Default cache TTL for Proxmox readiness probes.
@@ -80,12 +82,19 @@ pub struct AppState {
     /// endpoints then return `404 Not Found` rather than 401, so they
     /// don't advertise an attack surface that isn't configured.
     pub vnc_secret: Option<Arc<SecretBox<Vec<u8>>>>,
+    /// OIDC / OAuth2 SSO service. `None` when disabled.
+    pub oidc: Option<Arc<OidcService>>,
+    /// Auto-created users from OIDC/OAuth2 login, keyed by `"provider:sub"`.
+    /// These are ephemeral (in-memory only) — they survive until process restart.
+    pub oidc_users: Arc<Mutex<HashMap<String, User>>>,
     /// Per-VM concurrency limiters for the VNC WebSocket proxy.
     /// Lazily inserted on first connection; survives for the process
     /// lifetime. Key format: `"<cluster>:<node>:<vmid>"`. We use
     /// `tokio::sync::Mutex` because entries are short-lived (the
     /// `entry().or_insert_with` pattern) and contention is low.
     pub vnc_limiters: Arc<Mutex<HashMap<String, Arc<crate::api::vnc::VncConnectionLimiter>>>>,
+    /// Prometheus metrics service (optional — `None` when metrics are unavailable).
+    pub metrics: Option<MetricsService>,
 }
 
 impl AppState {
@@ -102,6 +111,8 @@ impl AppState {
         users: UserStore,
         vnc_secret: Option<SecretBox<Vec<u8>>>,
         webauthn_state: Option<WebauthnState>,
+        oidc_service: Option<OidcService>,
+        metrics: Option<MetricsService>,
     ) -> Self {
         Self {
             config: Arc::new(config),
@@ -114,7 +125,10 @@ impl AppState {
             preauth: Arc::new(PreAuthStore::new()),
             webauthn: webauthn_state.map(Arc::new),
             vnc_secret: vnc_secret.map(Arc::new),
+            oidc: oidc_service.map(Arc::new),
+            oidc_users: Arc::new(Mutex::new(HashMap::new())),
             vnc_limiters: Arc::new(Mutex::new(HashMap::new())),
+            metrics,
         }
     }
 
@@ -133,6 +147,30 @@ impl AppState {
     /// Iterate over all configured Proxmox clients.
     pub fn clients(&self) -> impl Iterator<Item = &ProxmoxClient> {
         self.clients.iter()
+    }
+
+    /// Iterate over Proxmox clients that a given user is allowed to access.
+    ///
+    /// Admins (or users with no cluster restrictions) see all clusters.
+    /// Restricted users see only their allowed clusters.
+    pub fn clients_for_user(&self, username: &str) -> Vec<&ProxmoxClient> {
+        let allowed = self.users.user_allowed_clusters_owned(username);
+        match allowed {
+            None => self.clients.iter().collect(),
+            Some(clusters) => self
+                .clients
+                .iter()
+                .filter(|c| clusters.iter().any(|a| a == c.name()))
+                .collect(),
+        }
+    }
+
+    /// Check whether a user can access a specific cluster.
+    ///
+    /// Delegates to [`UserStore::user_can_access_cluster`].
+    #[must_use]
+    pub fn user_can_access_cluster(&self, username: &str, cluster: &str) -> bool {
+        self.users.user_can_access_cluster(username, cluster)
     }
 
     /// Return a freshness-guarded readiness snapshot for all clusters.
@@ -213,6 +251,7 @@ mod tests {
             },
             clusters: vec![],
             auth: crate::config::AuthConfig::default(),
+            tracing: crate::observability::tracing::TracingConfig::default(),
         }
     }
 
@@ -232,6 +271,8 @@ mod tests {
             audit,
             test_jwt(),
             UserStore::new(),
+            None,
+            None,
             None,
             None,
         );
@@ -273,6 +314,8 @@ mod tests {
             UserStore::new(),
             None,
             None,
+            None,
+            None,
         );
 
         assert_eq!(state.clients.len(), 2);
@@ -291,6 +334,8 @@ mod tests {
             audit,
             test_jwt(),
             UserStore::new(),
+            None,
+            None,
             None,
             None,
         );

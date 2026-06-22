@@ -40,6 +40,9 @@ pub struct Config {
     /// Auth configuration (JWT keys + user accounts).
     #[serde(default)]
     pub auth: AuthConfig,
+    /// OpenTelemetry tracing configuration.
+    #[serde(default)]
+    pub tracing: crate::observability::tracing::TracingConfig,
 }
 
 /// HTTP server configuration.
@@ -155,6 +158,9 @@ pub struct AuthConfig {
     /// WebAuthn / passkey configuration.
     #[serde(default)]
     pub webauthn: WebauthnConfig,
+    /// OIDC / OAuth2 SSO configuration (Google, GitHub).
+    #[serde(default)]
+    pub oidc: OidcConfig,
 }
 
 /// WebAuthn / passkey configuration.
@@ -193,6 +199,43 @@ impl Default for WebauthnConfig {
             rp_name: "MoxUI".to_string(),
         }
     }
+}
+
+/// OIDC / OAuth2 SSO configuration.
+///
+/// When enabled, users can sign in via Google or GitHub OIDC/OAuth2.
+/// Providers are configured under `auth.oidc.providers`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct OidcConfig {
+    /// Enable OIDC / OAuth2 SSO.
+    #[serde(default)]
+    pub enabled: bool,
+    /// OIDC / OAuth2 provider configurations.
+    #[serde(default)]
+    pub providers: Vec<OidcProviderConfig>,
+}
+
+impl Default for OidcConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            providers: vec![],
+        }
+    }
+}
+
+/// Configuration for a single OIDC / OAuth2 provider (Google or GitHub).
+#[derive(Debug, Clone, Deserialize)]
+pub struct OidcProviderConfig {
+    /// Provider name. Must be `"google"` or `"github"`.
+    pub name: String,
+    /// OAuth2 client ID.
+    pub client_id: String,
+    /// OAuth2 client secret.
+    pub client_secret: String,
+    /// Redirect URL registered with the provider
+    /// (e.g. `http://localhost:8080/api/v1/auth/oidc/callback`).
+    pub redirect_url: String,
 }
 
 /// Rate limiting configuration (tower-governor).
@@ -297,6 +340,13 @@ pub struct UserConfig {
     /// Is this account enabled? Default: true.
     #[serde(default = "default_true_user")]
     pub enabled: bool,
+    /// Clusters this user is allowed to access.
+    /// Empty = access to all clusters (admin default).
+    /// When non-empty, the user can only see/operate on these clusters.
+    /// Cluster names must match the `name` field in `ClusterConfig`.
+    /// For admin users, this is typically left empty.
+    #[serde(default)]
+    pub allowed_clusters: Vec<String>,
 }
 
 fn default_true_user() -> bool {

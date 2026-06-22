@@ -1,37 +1,262 @@
-# MoxUI configuration file
+# =============================================================================
+# MoxUI Configuration File
+# =============================================================================
 #
-# Copy to config.yaml (NOT committed) and edit
-# All settings can be overridden via MOXUI_* environment variables
+# Copy this file to config.yaml (do NOT commit the real config.yaml to git).
+# All YAML keys can be overridden via MOXUI_* environment variables.
+# Use double underscores for nested keys: MOXUI_SERVER__BIND
+#
+# Precedence (high → low):
+#   1. Environment variables (MOXUI_*)
+#   2. YAML config file
+#   3. Hardcoded defaults
+#
+# =============================================================================
+
+# ── Server ──────────────────────────────────────────────────────────────────
 
 server:
+  # Address and port to listen on.
+  # Env: MOXUI_SERVER__BIND
   bind: "0.0.0.0:8080"
-  workers: 0  # 0 = num CPUs
+
+  # Number of tokio worker threads. 0 = use all available CPUs.
+  # Env: MOXUI_SERVER__WORKERS
+  workers: 0
+
+  # TLS configuration. When present, the server listens with HTTPS only
+  # and refuses plaintext HTTP. When absent, plaintext HTTP is used (with
+  # a startup warning — dev mode).
+  # Env: MOXUI_SERVER__TLS__CERT_PEM_PATH, MOXUI_SERVER__TLS__KEY_PEM_PATH
+  tls:
+    # Path to PEM-encoded certificate (full chain: leaf + intermediates).
+    cert_pem_path: "/etc/moxui/tls/cert.pem"
+    # Path to PEM-encoded private key (unencrypted PKCS#8 or RSA PEM).
+    key_pem_path: "/etc/moxui/tls/key.pem"
+
+# ── Database ────────────────────────────────────────────────────────────────
 
 database:
-  path: "/home/moxui/data/moxui.db"
+  # SQLite database file path. The audit log is stored at {path}.audit.
+  # Env: MOXUI_DATABASE__PATH
+  path: "/var/lib/moxui/data/moxui.db"
+
+  # Maximum connections in the r2d2 connection pool.
+  # Env: MOXUI_DATABASE__MAX_CONNECTIONS
   max_connections: 8
+
+  # Run schema migrations on startup. Recommended: true.
+  # Env: MOXUI_DATABASE__RUN_MIGRATIONS
   run_migrations: true
 
-logging:
-  level: "info"      # trace|debug|info|warn|error
-  format: "pretty"    # pretty|json
+# ── Logging ─────────────────────────────────────────────────────────────────
 
-# Proxmox clusters to connect to
+logging:
+  # Log level: trace | debug | info | warn | error
+  # Env: MOXUI_LOGGING__LEVEL
+  level: "info"
+
+  # Output format: pretty (colored, human-readable) | json (structured, prod)
+  # Default for debug builds: pretty. Default for release builds: json.
+  # Env: MOXUI_LOGGING__FORMAT
+  format: "pretty"
+
+# ── Proxmox Clusters ────────────────────────────────────────────────────────
+#
+# One entry per Proxmox VE cluster. MoxUI aggregates data across all clusters.
+# Passwords should use env var references in production — never commit them.
+#
+# Example:
+#   clusters:
+#     - name: "homelab"
+#       url: "https://192.168.1.11:8006"
+#       username: "root@pam"
+#       password: "${MOXUI_PROXMOX_HOMELAB_PASSWORD}"
+#       realm: "pam"
+#       insecure_skip_verify: true
+#
 clusters:
   - name: "homelab"
     url: "https://192.168.1.11:8006"
     username: "root@pam"
+    # Use env var substitution for passwords. MoxUI reads the value at startup
+    # and wraps it in SecretString (zeroed on drop, never logged).
     password: "${MOXUI_PROXMOX_HOMELAB_PASSWORD}"
-    realm: "pam"            # pam|pve|openid
-    insecure_skip_verify: true   # true for self-signed certs
+    # Auth realm: pam | pve | openid
+    realm: "pam"
+    # Skip TLS verification. ⚠️ Production should use false + ca_cert_pem.
+    # When true, an audit warning is logged at startup.
+    insecure_skip_verify: true
+    # PEM-encoded CA certificate for TLS verification.
+    # Alternative to insecure_skip_verify: true.
     # ca_cert_pem: |
     #   -----BEGIN CERTIFICATE-----
-    #   ... (alternative to insecure_skip_verify)
+    #   MIID...
     #   -----END CERTIFICATE-----
 
-  - name: "production"
-    url: "https://pve.example.com:8006"
-    username: "proxui@pve"
-    password: "${MOXUI_PROXMOX_PROD_PASSWORD}"
-    realm: "pve"
-    insecure_skip_verify: false
+  # - name: "production"
+  #   url: "https://pve.example.com:8006"
+  #   username: "proxui@pve"
+  #   password: "${MOXUI_PROXMOX_PROD_PASSWORD}"
+  #   realm: "pve"
+  #   insecure_skip_verify: false
+
+# ── Authentication ──────────────────────────────────────────────────────────
+
+auth:
+  # ── JWT Settings ──────────────────────────────────────────────────────────
+
+  # JWT issuer claim ("iss"). This must match between encode and decode.
+  # Env: MOXUI_AUTH__JWT_ISSUER
+  jwt_issuer: "moxui"
+
+  # JWT audience claim ("aud").
+  # Env: MOXUI_AUTH__JWT_AUDIENCE
+  jwt_audience: "moxui-clients"
+
+  # Token lifetime in seconds. Default: 3600 (1 hour).
+  # Env: MOXUI_AUTH__JWT_LIFETIME_SECS
+  jwt_lifetime_secs: 3600
+
+  # Path to PEM-encoded RSA private key (2048-bit minimum).
+  # **Required.** The server refuses to start without it (fail-closed).
+  # Env: MOXUI_AUTH__JWT_PRIVATE_KEY_PEM_PATH
+  jwt_private_key_pem_path: "/etc/moxui/jwt_priv.pem"
+
+  # Path to PEM-encoded RSA public key.
+  # **Required.** Must be paired with jwt_private_key_pem_path.
+  # Env: MOXUI_AUTH__JWT_PUBLIC_KEY_PEM_PATH
+  jwt_public_key_pem_path: "/etc/moxui/jwt_pub.pem"
+
+  # ── VNC Console Secret ────────────────────────────────────────────────────
+
+  # Path to a file containing the HMAC secret for VNC console tokens.
+  # The file is read as raw bytes (minimum 32 bytes recommended).
+  # When absent, VNC endpoints return 404 (disabled by design).
+  # Env: MOXUI_AUTH__VNC_TOKEN_SECRET_PEM_PATH
+  vnc_token_secret_pem_path: "/etc/moxui/vnc_secret.bin"
+
+  # ── Seeded Users ──────────────────────────────────────────────────────────
+
+  # User accounts seeded at startup. Passwords can be:
+  # - bcrypt hash (password_hash — preferred for production)
+  # - plaintext (password — dev/first-boot only, ignored if password_hash is set)
+  users:
+    - id: "u-admin"
+      username: "admin"
+      display_name: "Admin User"
+      email: "admin@example.com"
+      # Role: admin | operator | viewer
+      role: "admin"
+      # Bcrypt hash (generate with: htpasswd -bnBC 10 "" <password> | cut -d: -f2)
+      password_hash: "$2b$10$..."
+      # ⚠️ Plaintext password — only for dev / first-boot!
+      # password: "admin123"
+      enabled: true
+      # Clusters this user can access. Empty = all clusters (admin default).
+      allowed_clusters: []
+
+    - id: "u-operator"
+      username: "operator"
+      display_name: "Operator User"
+      role: "operator"
+      password_hash: "$2b$10$..."
+      allowed_clusters: ["homelab"]
+
+    - id: "u-viewer"
+      username: "viewer"
+      display_name: "Read-Only User"
+      role: "viewer"
+      password: "viewer123"
+      allowed_clusters: ["homelab"]
+
+  # ── Rate Limiting ─────────────────────────────────────────────────────────
+
+  rate_limit:
+    # Maximum requests per second per IP address.
+    # Env: MOXUI_AUTH__RATE_LIMIT__REQUESTS_PER_SECOND
+    requests_per_second: 5
+
+    # Burst size — peak requests allowed before rate limiting kicks in.
+    # Env: MOXUI_AUTH__RATE_LIMIT__BURST_SIZE
+    burst_size: 10
+
+  # ── CORS ──────────────────────────────────────────────────────────────────
+
+  cors:
+    # Allowed CORS origins. Empty = allow all origins (*) — development mode.
+    # In production, restrict to your domain(s):
+    #   allowed_origins:
+    #     - "https://moxui.example.com"
+    # Env: MOXUI_AUTH__CORS__ALLOWED_ORIGINS (comma-separated)
+    allowed_origins: []
+
+    # Preflight cache max-age in seconds. Default: 86400 (24h).
+    # Env: MOXUI_AUTH__CORS__MAX_AGE_SECS
+    max_age_secs: 86400
+
+  # ── API Key Authentication ────────────────────────────────────────────────
+
+  api_key:
+    # Enable API key authentication. When enabled, clients can authenticate
+    # via X-API-Key header instead of (or in addition to) Bearer JWT.
+    # Best for automation / CI pipelines.
+    # Env: MOXUI_AUTH__API_KEY__ENABLED
+    enabled: false
+
+    # The shared API key secret.
+    # Env: MOXUI_AUTH__API_KEY__KEY
+    key: "your-api-key-here"
+
+  # ── WebAuthn / Passkey ────────────────────────────────────────────────────
+
+  webauthn:
+    # Enable WebAuthn passkey authentication. Requires HTTPS in production.
+    # Env: MOXUI_AUTH__WEBAUTHN__ENABLED
+    enabled: false
+
+    # Relying Party ID (the domain, e.g. "moxui.example.com").
+    # Env: MOXUI_AUTH__WEBAUTHN__RP_ID
+    rp_id: "localhost"
+
+    # Relying Party origin (must match the browser's URL exactly).
+    # Env: MOXUI_AUTH__WEBAUTHN__RP_ORIGIN
+    rp_origin: "http://localhost:8080"
+
+    # Relying Party display name shown in the browser prompt.
+    # Env: MOXUI_AUTH__WEBAUTHN__RP_NAME
+    rp_name: "MoxUI"
+
+  # ── OIDC / OAuth2 SSO ─────────────────────────────────────────────────────
+
+  oidc:
+    # Enable OIDC / OAuth2 SSO (Google, GitHub).
+    # Env: MOXUI_AUTH__OIDC__ENABLED
+    enabled: false
+
+    # OIDC / OAuth2 provider configurations.
+    providers:
+      - name: "google"
+        client_id: "your-google-client-id.apps.googleusercontent.com"
+        client_secret: "${MOXUI_OIDC_GOOGLE_CLIENT_SECRET}"
+        redirect_url: "http://localhost:8080/api/v1/auth/oidc/callback"
+
+      - name: "github"
+        client_id: "your-github-client-id"
+        client_secret: "${MOXUI_OIDC_GITHUB_CLIENT_SECRET}"
+        redirect_url: "http://localhost:8080/api/v1/auth/oidc/callback"
+
+# ── OpenTelemetry Tracing (Optional) ─────────────────────────────────────────
+
+tracing:
+  # Enable OTLP tracing export (Jaeger, Grafana Tempo, SigNoz, etc.).
+  # Env: MOXUI_TRACING__ENABLED
+  enabled: false
+
+  # OTLP gRPC endpoint.
+  # Env: MOXUI_TRACING__OTLP_ENDPOINT
+  otlp_endpoint: "http://localhost:4317"
+
+  # Service name reported to the tracing backend.
+  # Env: MOXUI_TRACING__SERVICE_NAME
+  service_name: "moxui"

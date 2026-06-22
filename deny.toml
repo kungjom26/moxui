@@ -10,11 +10,20 @@ exclude-dev = true
 [advisories]
 # Ignore specific advisories (use sparingly — prefer upgrading the crate)
 ignore = [
-    # Example: { id = "RUSTSEC-2024-0001", reason = "Under review" },
+    # RUSTSEC-2023-0071: rsa v0.9.10 — Marvin Attack (medium, 5.9).
+    # Transitive via openidconnect 4.0.1. No fix available for rsa yet;
+    # openidconnect has no newer version that drops the dependency.
+    # Severity is below our `high` threshold so cargo deny already permits it.
+    { id = "RUSTSEC-2023-0071", reason = "Transitive via openidconnect 4.0.1; no fix available; medium severity (5.9) below deny threshold" },
+    # RUSTSEC-2025-0134: rustls-pemfile 2.2.0 unmaintained.
+    # Transitive via axum-server 0.7.x. Cargo.toml already documents that
+    # rustls-pki-types (1.9+) replaces its functionality. Upgrade axum-server
+    # to 0.8.x when compatible. This is a warning, not a vulnerability.
+    { id = "RUSTSEC-2025-0134", reason = "Transitive via axum-server 0.7.x; replaced by rustls-pki-types; unmaintained warning only" },
 ]
 
-# Severity threshold: only fail on advisories at or above this level
-severity-threshold = "high"
+# Severity threshold removed in cargo-deny 0.18+; all advisories at any
+# severity now fail by default. Use `ignore` list below for acceptable ones.
 
 [licenses]
 # Which licenses are allowed
@@ -29,21 +38,61 @@ allow = [
     "Unlicense",
     "Zlib",
     "CC0-1.0",
-    "OpenSSL",
     "0BSD",
     "MPL-2.0",
+    "CDLA-Permissive-2.0",
 ]
-
-# Fail when a license isn't in the allow list
-unlicensed = "deny"
 
 # Confidence threshold for license detection (0.0 - 1.0)
 confidence-threshold = 0.8
+
+# `unlicensed` key removed in cargo-deny 0.18+; unlicensed crates are now
+# always errors by default. The `clarify` field can help if needed.
 
 [licenses.private]
 # Treat the workspace crate itself as unlicensed (we own it)
 ignore = true
 
 [bans]
-# Prevent multiple versions of the same crate
+# Prevent multiple versions of the same crate where fixable
 multiple-versions = "deny"
+
+# Skip unavoidable duplicate versions — semver-incompatible transitive deps
+# pulled in by different libraries that haven't aligned yet.
+skip = [
+    # Image/icon handling
+    { name = "base64", version = "0.21" },          # via webauthn-rs / openidconnect
+    # Crypto — chacha20poly1305 uses 0.9, uuid/rand use 0.10
+    { name = "chacha20", version = "0.9" },
+    { name = "cpufeatures", version = "0.2" },
+    # Random — rand 0.8 (direct/tower), 0.9 (governor/webauthn), 0.10 (uuid)
+    { name = "getrandom", version = "0.2" },
+    { name = "getrandom", version = "0.3" },
+    { name = "rand", version = "0.8" },
+    { name = "rand", version = "0.9" },
+    { name = "rand_chacha", version = "0.3" },
+    { name = "rand_chacha", version = "0.9" },
+    { name = "rand_core", version = "0.6" },
+    { name = "rand_core", version = "0.9" },
+    # Hash/map — indexmap 1.x (tower) vs 2.x (h2/serde_yaml/toml_edit)
+    { name = "hashbrown", version = "0.12" },
+    { name = "hashbrown", version = "0.14" },
+    { name = "hashbrown", version = "0.16" },
+    { name = "indexmap", version = "1" },
+    # Networking
+    { name = "socket2", version = "0.5" },           # via tonic
+    { name = "r-efi", version = "5" },               # via getrandom 0.3
+    # Error handling — thiserror 1.x vs 2.x
+    { name = "thiserror", version = "1" },
+    { name = "thiserror-impl", version = "1" },
+    # WebSocket — moxui uses 0.21, axum uses 0.24
+    { name = "tokio-tungstenite", version = "0.21" },
+    { name = "tungstenite", version = "0.21" },
+    # Tower — 0.4 (direct/tonic) vs 0.5 (axum/reqwest)
+    { name = "tower", version = "0.4" },
+    { name = "tower-http", version = "0.5" },
+    # TLS roots — webpki-roots 0.26 (direct) vs 1.0 (reqwest/hyper)
+    { name = "webpki-roots", version = "0.26" },
+    # Windows compat
+    { name = "windows-sys", version = "0.52" },      # via ring/socket2
+]

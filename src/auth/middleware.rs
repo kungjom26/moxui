@@ -26,7 +26,7 @@ use super::{jwt::Claims, user::Role};
 /// Bearer token prefix in the `Authorization` header.
 const BEARER_PREFIX: &str = "Bearer ";
 
-/// Axum middleware — require a valid `Authorization: Bearer <jwt>` header.
+/// Axum middleware — require a valid `Authorization: Bearer *** header.
 ///
 /// On success, the decoded [`Claims`] are stored in the request extensions
 /// so [`AuthContext`] (or any other extractor) can read them.
@@ -53,6 +53,64 @@ pub async fn require_auth(
             tracing::debug!(error = %e, "rejected invalid JWT");
             (StatusCode::UNAUTHORIZED, "Invalid or expired token").into_response()
         }
+    }
+}
+
+/// Axum middleware — require that the calling user has access to the
+/// cluster identified by the `:cluster` path parameter.
+///
+/// Must be applied AFTER [`require_auth`] so the [`Claims`] are available
+/// in the request extensions. Extracts the cluster name from the 4th
+/// path segment of `/api/v1/{resource}/{cluster}/...` and checks it
+/// against the user's `allowed_clusters` via [`UserStore::user_can_access_cluster`].
+///
+/// Users with unrestricted access (admin, or no allowed_clusters configured)
+/// are always allowed.
+///
+/// # Errors
+///
+/// - `403 Forbidden` if the user is not allowed to access the cluster.
+/// - `400 Bad Request` if no cluster segment is found in the path.
+pub async fn require_cluster_access(
+    axum::extract::State(state): axum::extract::State<crate::state::AppState>,
+    request: axum::extract::Request,
+    next: Next,
+) -> Response {
+    // Extract claims set by require_auth.
+    let claims = match request.extensions().get::<Claims>() {
+        Some(c) => c.clone(),
+        None => {
+            tracing::warn!("require_cluster_access called without require_auth — misconfigured route");
+            return unauthorized("auth context missing — require_auth must precede require_cluster_access");
+        }
+    };
+
+    // Extract cluster name from the URL path.
+    // Format: /api/v1/{resource}/{cluster}/...
+    // The cluster is always the 4th path segment (index 3).
+    let cluster = match extract_cluster_from_path(request.uri().path()) {
+        Some(c) => c,
+        None => {
+            tracing::warn!(
+                path = %request.uri().path(),
+                "require_cluster_access: no cluster segment found in path"
+            );
+            return (StatusCode::BAD_REQUEST, "No cluster specified in request path").into_response();
+        }
+    };
+
+    // Check access.
+    if state.users.user_can_access_cluster(&claims.username, &cluster) {
+        next.run(request).await
+    } else {
+        tracing::warn!(
+            user = %claims.username,
+            cluster = %cluster,
+            "cluster access denied"
+        );
+        forbidden(&format!(
+            "Access denied to cluster '{cluster}'"
+        ))
     }
 }
 
@@ -155,6 +213,24 @@ fn unauthorized(msg: &str) -> Response {
 
 fn forbidden(msg: &str) -> Response {
     (StatusCode::FORBIDDEN, msg.to_string()).into_response()
+}
+
+/// Extract the cluster name from a URL path like `/api/v1/vms/{cluster}/...`.
+///
+/// Returns the 4th path segment (index 3) when the path starts with
+/// `/api/v1/`, which is where `:cluster` params sit in all current routes.
+/// Returns `None` if the path is too short or doesn't match the expected
+/// prefix — including for routes that don't carry a cluster param at all
+/// (e.g. `/api/v1/dashboard`), which means the middleware can safely be
+/// applied to any protected route without false positives.
+fn extract_cluster_from_path(path: &str) -> Option<String> {
+    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    // /api/v1/{resource}/{cluster}/...
+    if segments.len() >= 4 && segments[0] == "api" && segments[1] == "v1" {
+        Some(segments[3].to_string())
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]

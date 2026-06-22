@@ -1,4 +1,4 @@
-//! Health check endpoints.
+//! Health check endpoints + Prometheus `/metrics` endpoint.
 
 use axum::{
     extract::State,
@@ -6,6 +6,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use prometheus::TextEncoder;
 use serde::Serialize;
 
 use crate::state::{AppState, ClusterStatus};
@@ -79,6 +80,36 @@ pub async fn readyz(State(state): State<AppState>) -> Response {
     (StatusCode::SERVICE_UNAVAILABLE, Json(body)).into_response()
 }
 
+/// `GET /metrics` — Prometheus metrics endpoint.
+///
+/// Returns metrics in Prometheus text format using the registry stored in
+/// [`MetricsService`]. Returns 404 if metrics are not configured.
+pub async fn metrics_handler(State(state): State<AppState>) -> Response {
+    let Some(metrics) = state.metrics.as_ref() else {
+        return (
+            StatusCode::NOT_FOUND,
+            "Metrics not configured (no MetricsService)",
+        )
+            .into_response();
+    };
+
+    let encoder = TextEncoder::new();
+    let metric_families = metrics.registry().gather();
+    match encoder.encode_to_string(&metric_families) {
+        Ok(body) => (
+            StatusCode::OK,
+            [(axum::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+            body,
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to encode metrics: {e}"),
+        )
+            .into_response(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -127,6 +158,7 @@ mod tests {
             },
             clusters: vec![],
             auth: AuthConfig::default(),
+            tracing: crate::observability::tracing::TracingConfig::default(),
         };
         let jwt = test_jwt();
         let token = jwt
@@ -146,9 +178,10 @@ mod tests {
             UserStore::new(),
             None,
             None,
+            None,
+            None,
         );
         let app = crate::api::router(state);
-
         // 1. GET /health → 200, should NOT be audited (read-only + 2xx).
         let resp = app
             .clone()
