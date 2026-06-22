@@ -126,8 +126,11 @@ pub async fn list_audit(
 
     match state.audit.query(&query) {
         Ok(result) => {
-            let entries: Vec<AuditEntryResponse> =
-                result.entries.into_iter().map(AuditEntryResponse::from).collect();
+            let entries: Vec<AuditEntryResponse> = result
+                .entries
+                .into_iter()
+                .map(AuditEntryResponse::from)
+                .collect();
             Ok(Json(AuditResponse {
                 entries,
                 total: result.total,
@@ -154,13 +157,7 @@ mod tests {
     use crate::audit::AuditStore;
     use crate::auth::{jwt::JwtService, user::UserStore};
     use crate::config::{AuthConfig, Config, ServerConfig};
-    use axum::{
-        body::Body,
-        http::Request,
-        http::StatusCode,
-        routing::get,
-        Router,
-    };
+    use axum::{body::Body, http::Request, http::StatusCode, routing::get, Router};
     use secrecy::SecretBox as _;
     use std::sync::Arc;
     use tower::ServiceExt;
@@ -169,13 +166,8 @@ mod tests {
     const PUB_PEM: &str = include_str!("../../tests/fixtures/test_jwt_pub.pem");
 
     fn test_state(audit: Arc<AuditStore>) -> AppState {
-        let jwt = JwtService::new(
-            PRIV_PEM.as_bytes(),
-            PUB_PEM.as_bytes(),
-            "test",
-            "test",
-        )
-        .expect("test keypair");
+        let jwt = JwtService::new(PRIV_PEM.as_bytes(), PUB_PEM.as_bytes(), "test", "test")
+            .expect("test keypair");
 
         let cfg = Config {
             server: ServerConfig {
@@ -196,7 +188,7 @@ mod tests {
             auth: AuthConfig::default(),
         };
 
-        AppState::new(cfg, vec![], audit, jwt, UserStore::new(), None)
+        AppState::new(cfg, vec![], audit, jwt, UserStore::new(), None, None)
     }
 
     fn seed_entries(store: &AuditStore, count: usize) {
@@ -205,7 +197,11 @@ mod tests {
                 .log(&AuditEntry {
                     ts: 1_700_000_000 + i as i64,
                     request_id: format!("req-{i}"),
-                    method: if i % 2 == 0 { "POST".into() } else { "DELETE".into() },
+                    method: if i % 2 == 0 {
+                        "POST".into()
+                    } else {
+                        "DELETE".into()
+                    },
                     path: if i % 3 == 0 {
                         "/api/v1/vms".into()
                     } else {
@@ -262,7 +258,11 @@ mod tests {
             })
             .unwrap();
 
-        assert_eq!(result.entries.len(), 10, "first page should have 10 entries");
+        assert_eq!(
+            result.entries.len(),
+            10,
+            "first page should have 10 entries"
+        );
         assert_eq!(result.total, 25, "total should be 25");
         assert_eq!(result.page, 1);
         assert_eq!(result.per_page, 10);

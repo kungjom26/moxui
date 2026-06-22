@@ -8,6 +8,7 @@ use clap::Parser;
 use secrecy::SecretBox;
 
 use moxui::audit::AuditStore;
+use moxui::auth::webauthn::WebauthnState;
 use moxui::auth::{JwtService, UserStore};
 use moxui::config::Config;
 use moxui::proxmox::ProxmoxClient;
@@ -149,8 +150,40 @@ async fn main() -> ExitCode {
         tracing::info!("VNC console disabled (auth.vnc_token_secret_pem_path not set)");
     }
 
+    // Initialize WebAuthn / passkey support (optional)
+    let webauthn_state = if config.auth.webauthn.enabled {
+        match WebauthnState::new(
+            &config.auth.webauthn.rp_id,
+            &config.auth.webauthn.rp_origin,
+            &config.auth.webauthn.rp_name,
+        ) {
+            Ok(ws) => {
+                tracing::info!("WebAuthn enabled (rp_id={})", config.auth.webauthn.rp_id);
+                Some(ws)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "WebAuthn config invalid — passkey login disabled"
+                );
+                None
+            }
+        }
+    } else {
+        tracing::info!("WebAuthn disabled (auth.webauthn.enabled=false)");
+        None
+    };
+
     // Create application state
-    let state = AppState::new(config.clone(), clients, audit, jwt, users, vnc_secret);
+    let state = AppState::new(
+        config.clone(),
+        clients,
+        audit,
+        jwt,
+        users,
+        vnc_secret,
+        webauthn_state,
+    );
 
     // Build router — API + UI are merged inside `api::router` so the
     // security-headers layer covers both with a single application.

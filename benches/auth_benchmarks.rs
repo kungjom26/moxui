@@ -54,7 +54,8 @@ fn bench_jwt_decode(c: &mut Criterion) {
 fn bench_password_hash(c: &mut Criterion) {
     c.bench_function("bcrypt_hash", |b| {
         b.iter(|| {
-            let hash = moxui::auth::password::hash_password(black_box("hunter2-bench-pwd")).unwrap();
+            let hash =
+                moxui::auth::password::hash_password(black_box("hunter2-bench-pwd")).unwrap();
             black_box(hash)
         })
     });
@@ -75,5 +76,11 @@ fn bench_password_verify(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_jwt_encode, bench_jwt_decode, bench_password_hash, bench_password_verify);
+criterion_group!(
+    benches,
+    bench_jwt_encode,
+    bench_jwt_decode,
+    bench_password_hash,
+    bench_password_verify
+);
 criterion_main!(benches);

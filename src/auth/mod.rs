@@ -19,6 +19,7 @@ pub mod refresh;
 pub mod totp;
 pub mod user;
 pub mod vnc;
+pub mod webauthn;
 
 pub use jwt::{Claims, JwtService};
 pub use middleware::{require_auth, require_role, AuthContext};

@@ -1,0 +1,61 @@
+# MoxUI — docker-compose for local development and production
+#
+# Usage:
+#   docker compose up -d          # Start with default config
+#   docker compose up -d --build  # Rebuild and start
+#
+# Configuration overrides:
+#   Create docker-compose.override.yml (gitignored) to set your
+#   own JWT keys, cluster credentials, etc.
+
+services:
+  moxui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: moxui:latest
+    container_name: moxui
+    restart: unless-stopped
+
+    ports:
+      - "8080:8080"
+
+    volumes:
+      # Mount a custom config if it exists, otherwise use the embedded defaults
+      - ./config.local.yaml:/etc/moxui/config.yaml:ro
+      # Persistent data (SQLite DB + audit log)
+      - moxui-data:/var/lib/moxui/data
+
+    environment:
+      # Override any config via env vars (MOXUI_ prefix, __ separator for nesting)
+      - MOXUI_CONFIG=/etc/moxui/config.yaml
+      - MOXUI_SERVER__BIND=0.0.0.0:8080
+      - MOXUI_DATABASE__PATH=/var/lib/moxui/data/moxui.db
+      - MOXUI_LOG_LEVEL=info
+      # Mount config for JWT keys and cluster credentials from the host
+      - MOXUI_AUTH__JWT_PRIVATE_KEY_PEM_PATH=/etc/moxui/jwt_priv.pem
+      - MOXUI_AUTH__JWT_PUBLIC_KEY_PEM_PATH=/etc/moxui/jwt_pub.pem
+
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/livez"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+    networks:
+      - moxui-net
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  moxui-net:
+    driver: bridge
+
+volumes:
+  moxui-data:
+    driver: local

@@ -178,183 +178,177 @@ impl AuditStore {
 
     /// Insert one [`AuditEntry`].
     pub fn log(&self, entry: &AuditEntry) -> Result<(), AuditStoreError> {
-            let entry = entry.clone();
-            let guard = self.inner.lock().expect("audit store mutex poisoned");
-            let duration_ms_i64 = i64::try_from(entry.duration_ms).unwrap_or(i64::MAX);
-            guard.execute(
-                "INSERT INTO audit_log
+        let entry = entry.clone();
+        let guard = self.inner.lock().expect("audit store mutex poisoned");
+        let duration_ms_i64 = i64::try_from(entry.duration_ms).unwrap_or(i64::MAX);
+        guard.execute(
+            "INSERT INTO audit_log
                     (ts, request_id, method, path, status, duration_ms,
                      remote_addr, user_agent, user_id)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                params![
-                    entry.ts,
-                    entry.request_id,
-                    entry.method,
-                    entry.path,
-                    entry.status,
-                    duration_ms_i64,
-                    entry.remote_addr,
-                    entry.user_agent,
-                    entry.user_id,
-                ],
-            )?;
-            Ok(())
+            params![
+                entry.ts,
+                entry.request_id,
+                entry.method,
+                entry.path,
+                entry.status,
+                duration_ms_i64,
+                entry.remote_addr,
+                entry.user_agent,
+                entry.user_id,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Paginated query with optional filters.
+    ///
+    /// Returns entries sorted by `ts` (descending by default), with total
+    /// count for pagination.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuditStoreError::Pagination`] if `page` or `per_page` are
+    /// zero, or `per_page` exceeds 500.
+    /// Returns [`AuditStoreError::Sqlite`] on SQLite errors.
+    pub fn query(&self, q: &AuditQuery) -> Result<AuditQueryResult, AuditStoreError> {
+        if q.page == 0 {
+            return Err(AuditStoreError::Pagination("page must be ≥ 1".into()));
+        }
+        if q.per_page == 0 || q.per_page > 500 {
+            return Err(AuditStoreError::Pagination(
+                "per_page must be between 1 and 500".into(),
+            ));
         }
 
-        /// Paginated query with optional filters.
-        ///
-        /// Returns entries sorted by `ts` (descending by default), with total
-        /// count for pagination.
-        ///
-        /// # Errors
-        ///
-        /// Returns [`AuditStoreError::Pagination`] if `page` or `per_page` are
-        /// zero, or `per_page` exceeds 500.
-        /// Returns [`AuditStoreError::Sqlite`] on SQLite errors.
-        pub fn query(&self, q: &AuditQuery) -> Result<AuditQueryResult, AuditStoreError> {
-            if q.page == 0 {
-                return Err(AuditStoreError::Pagination("page must be ≥ 1".into()));
-            }
-            if q.per_page == 0 || q.per_page > 500 {
-                return Err(AuditStoreError::Pagination(
-                    "per_page must be between 1 and 500".into(),
-                ));
-            }
+        let guard = self.inner.lock().expect("audit store mutex poisoned");
+        let (where_clause, params, next_idx) = Self::build_where(q);
+        let order = match q.sort_dir {
+            SortDir::Desc => "DESC",
+            SortDir::Asc => "ASC",
+        };
+        let offset = (q.page - 1) * q.per_page;
 
-            let guard = self.inner.lock().expect("audit store mutex poisoned");
-            let (where_clause, params, next_idx) = Self::build_where(q);
-            let order = match q.sort_dir {
-                SortDir::Desc => "DESC",
-                SortDir::Asc => "ASC",
-            };
-            let offset = (q.page - 1) * q.per_page;
+        // Count total matching rows.
+        let count_sql = format!("SELECT COUNT(*) FROM audit_log WHERE {where_clause}");
+        let total: i64 = guard.query_row(
+            &count_sql,
+            rusqlite::params_from_iter(params.iter().map(std::convert::AsRef::as_ref)),
+            |row| row.get(0),
+        )?;
+        let total = u64::try_from(total).unwrap_or(0);
 
-            // Count total matching rows.
-            let count_sql = format!("SELECT COUNT(*) FROM audit_log WHERE {where_clause}");
-            let total: i64 = guard.query_row(
-                &count_sql,
-                rusqlite::params_from_iter(params.iter().map(std::convert::AsRef::as_ref)),
-                |row| row.get(0),
-            )?;
-            let total = u64::try_from(total).unwrap_or(0);
-
-            // Fetch page.
-            let data_sql = format!(
-                "SELECT id, ts, request_id, method, path, status, duration_ms, \
+        // Fetch page.
+        let data_sql = format!(
+            "SELECT id, ts, request_id, method, path, status, duration_ms, \
                         remote_addr, user_agent, user_id \
                  FROM audit_log WHERE {where_clause} \
                  ORDER BY ts {order}, id {order} \
                  LIMIT ?{n1} OFFSET ?{n2}",
-                n1 = next_idx,
-                n2 = next_idx + 1,
-            );
+            n1 = next_idx,
+            n2 = next_idx + 1,
+        );
 
-            let mut all_params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
-            for p in params {
-                all_params.push(p);
-            }
-            all_params.push(Box::new(i64::try_from(q.per_page).unwrap_or(50)));
-            all_params.push(Box::new(i64::try_from(offset).unwrap_or(0)));
-
-            let mut stmt = guard.prepare(&data_sql)?;
-            let rows = stmt.query_map(
-                rusqlite::params_from_iter(all_params.iter().map(std::convert::AsRef::as_ref)),
-                Self::map_row,
-            )?;
-
-            let entries: Vec<AuditEntryRow> = rows.collect::<Result<_, _>>()?;
-            let pages = if total == 0 {
-                0
-            } else {
-                ((total - 1) / q.per_page) + 1
-            };
-
-            Ok(AuditQueryResult {
-                entries,
-                total,
-                page: q.page,
-                per_page: q.per_page,
-                pages,
-            })
+        let mut all_params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        for p in params {
+            all_params.push(p);
         }
+        all_params.push(Box::new(i64::try_from(q.per_page).unwrap_or(50)));
+        all_params.push(Box::new(i64::try_from(offset).unwrap_or(0)));
 
-        /// Build WHERE clause and parameter list for an [`AuditQuery`].
-        fn build_where(
-            q: &AuditQuery,
-        ) -> (
-            String,
-            Vec<Box<dyn rusqlite::types::ToSql>>,
-            usize,
-        ) {
-            let mut conditions: Vec<String> = vec!["1 = ?1".to_string()];
-            let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
-            let mut idx = 1usize;
+        let mut stmt = guard.prepare(&data_sql)?;
+        let rows = stmt.query_map(
+            rusqlite::params_from_iter(all_params.iter().map(std::convert::AsRef::as_ref)),
+            Self::map_row,
+        )?;
 
-            params.push(Box::new(1));
+        let entries: Vec<AuditEntryRow> = rows.collect::<Result<_, _>>()?;
+        let pages = if total == 0 {
+            0
+        } else {
+            ((total - 1) / q.per_page) + 1
+        };
 
-            macro_rules! add_param {
-                ($col:expr, $val:expr) => {{
-                    idx += 1;
-                    conditions.push(format!("{} = ?{idx}", $col));
-                    params.push($val);
-                }};
-            }
+        Ok(AuditQueryResult {
+            entries,
+            total,
+            page: q.page,
+            per_page: q.per_page,
+            pages,
+        })
+    }
 
-            if let Some(ref method) = q.method {
-                add_param!("method", Box::new(method.clone()));
-            }
-            if let Some(ref path) = q.path {
+    /// Build WHERE clause and parameter list for an [`AuditQuery`].
+    fn build_where(q: &AuditQuery) -> (String, Vec<Box<dyn rusqlite::types::ToSql>>, usize) {
+        let mut conditions: Vec<String> = vec!["1 = ?1".to_string()];
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        let mut idx = 1usize;
+
+        params.push(Box::new(1));
+
+        macro_rules! add_param {
+            ($col:expr, $val:expr) => {{
                 idx += 1;
-                conditions.push(format!("INSTR(path, ?{idx}) > 0"));
-                params.push(Box::new(path.clone()));
-            }
-            if let Some(status) = q.status {
-                add_param!("status", Box::new(i64::from(status)));
-            }
-            if let Some(ts) = q.from_ts {
-                add_param!("ts", Box::new(ts));
-            }
-            if let Some(ts) = q.to_ts {
-                add_param!("ts", Box::new(ts));
-            }
-            if let Some(ref rid) = q.request_id {
-                add_param!("request_id", Box::new(rid.clone()));
-            }
-
-            (conditions.join(" AND "), params, idx + 1)
+                conditions.push(format!("{} = ?{idx}", $col));
+                params.push($val);
+            }};
         }
 
-        /// Map a SQLite row to an [`AuditEntryRow`].
-        fn map_row(row: &rusqlite::Row) -> rusqlite::Result<AuditEntryRow> {
-            Ok(AuditEntryRow {
-                id: row.get(0)?,
-                entry: AuditEntry {
-                    ts: row.get(1)?,
-                    request_id: row.get(2)?,
-                    method: row.get(3)?,
-                    path: row.get(4)?,
-                    status: row.get::<_, u16>(5)?,
-                    duration_ms: {
-                        let d: i64 = row.get(6)?;
-                        u64::try_from(d.max(0)).unwrap_or(0)
-                    },
-                    remote_addr: row.get(7)?,
-                    user_agent: row.get(8)?,
-                    user_id: row.get(9)?,
+        if let Some(ref method) = q.method {
+            add_param!("method", Box::new(method.clone()));
+        }
+        if let Some(ref path) = q.path {
+            idx += 1;
+            conditions.push(format!("INSTR(path, ?{idx}) > 0"));
+            params.push(Box::new(path.clone()));
+        }
+        if let Some(status) = q.status {
+            add_param!("status", Box::new(i64::from(status)));
+        }
+        if let Some(ts) = q.from_ts {
+            add_param!("ts", Box::new(ts));
+        }
+        if let Some(ts) = q.to_ts {
+            add_param!("ts", Box::new(ts));
+        }
+        if let Some(ref rid) = q.request_id {
+            add_param!("request_id", Box::new(rid.clone()));
+        }
+
+        (conditions.join(" AND "), params, idx + 1)
+    }
+
+    /// Map a SQLite row to an [`AuditEntryRow`].
+    fn map_row(row: &rusqlite::Row) -> rusqlite::Result<AuditEntryRow> {
+        Ok(AuditEntryRow {
+            id: row.get(0)?,
+            entry: AuditEntry {
+                ts: row.get(1)?,
+                request_id: row.get(2)?,
+                method: row.get(3)?,
+                path: row.get(4)?,
+                status: row.get::<_, u16>(5)?,
+                duration_ms: {
+                    let d: i64 = row.get(6)?;
+                    u64::try_from(d.max(0)).unwrap_or(0)
                 },
-            })
-        }
+                remote_addr: row.get(7)?,
+                user_agent: row.get(8)?,
+                user_id: row.get(9)?,
+            },
+        })
+    }
 
-        /// Return the number of rows in the audit log (test helper).
-        #[cfg(test)]
-        pub fn count(&self) -> Result<usize, AuditStoreError> {
-            let guard = self.inner.lock().expect("audit store mutex poisoned");
-            let n: i64 = guard.query_row("SELECT COUNT(*) FROM audit_log", [], |row| row.get(0))?;
-            Ok(usize::try_from(n).unwrap_or(0))
-        }
+    /// Return the number of rows in the audit log (test helper).
+    #[cfg(test)]
+    pub fn count(&self) -> Result<usize, AuditStoreError> {
+        let guard = self.inner.lock().expect("audit store mutex poisoned");
+        let n: i64 = guard.query_row("SELECT COUNT(*) FROM audit_log", [], |row| row.get(0))?;
+        Ok(usize::try_from(n).unwrap_or(0))
+    }
 
-        /// Look up an entry by its request id (returns the first match).
-        pub fn find_by_request_id(
+    /// Look up an entry by its request id (returns the first match).
+    pub fn find_by_request_id(
         &self,
         request_id: &str,
     ) -> Result<Option<AuditEntry>, AuditStoreError> {

@@ -80,8 +80,7 @@ pub fn verify_totp(secret_b32: &str, code: &str) -> bool {
 fn compute_totp(secret: &[u8], counter: u64) -> String {
     use hmac::Mac;
     let counter_bytes = counter.to_be_bytes();
-    let mut mac =
-        hmac::Hmac::<Sha1>::new_from_slice(secret).expect("valid HMAC key length");
+    let mut mac = hmac::Hmac::<Sha1>::new_from_slice(secret).expect("valid HMAC key length");
     mac.update(&counter_bytes);
     let result = mac.finalize().into_bytes();
 
@@ -111,10 +110,7 @@ pub fn generate_backup_codes() -> (Vec<String>, Vec<SecretString>) {
     let mut hashed = Vec::with_capacity(BACKUP_CODE_COUNT);
 
     for _ in 0..BACKUP_CODE_COUNT {
-        let code = format!(
-            "{:08}",
-            rand::rngs::OsRng.next_u32() % 100_000_000
-        );
+        let code = format!("{:08}", rand::rngs::OsRng.next_u32() % 100_000_000);
         let h = hash_password(&code).expect("bcrypt hash of backup code");
         plain.push(code);
         hashed.push(SecretString::new(h.into_boxed_str()));
@@ -284,8 +280,9 @@ fn base32_decode(s: &str) -> Result<Vec<u8>, String> {
         bits += 5;
         if bits >= 8 {
             bits -= 8;
+            #[allow(clippy::cast_possible_truncation)]
+            // bits < 8, so the shift produces at most 8 bits
             out.push((buffer >> bits) as u8);
-            // bits is guaranteed < 8 here, so the cast is safe
         }
     }
     Ok(out)
@@ -302,7 +299,10 @@ fn url_encode(s: &str) -> String {
                 out.push(b as char);
             }
             b' ' => out.push_str("%20"),
-            _ => out.push_str(&format!("%{b:02X}")),
+            _ => {
+                #[allow(clippy::format_push_string)]
+                out.push_str(&format!("%{b:02X}"));
+            }
         }
     }
     out

@@ -11,11 +11,7 @@
 //! - Monitoring integrations
 //! - Read‑only API access (when combined with a viewer role)
 
-use axum::{
-    body::Body,
-    http::Request,
-    response::Response,
-};
+use axum::{body::Body, http::Request, response::Response};
 use futures_util::future::BoxFuture;
 use tower::Layer;
 
@@ -108,7 +104,11 @@ where
         // Check API key — insert extension if valid
         if self.config.enabled {
             if let Some(cfg_key) = &self.config.key {
-                if req.headers().get(API_KEY_HEADER).is_some_and(|v| v.as_bytes() == cfg_key.as_bytes()) {
+                if req
+                    .headers()
+                    .get(API_KEY_HEADER)
+                    .is_some_and(|v| v.as_bytes() == cfg_key.as_bytes())
+                {
                     req.extensions_mut().insert(ApiKeyAuthenticated);
                 }
             }
@@ -236,11 +236,7 @@ mod tests {
         }));
 
         let resp = svc
-            .oneshot(
-                Request::builder()
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::builder().body(Body::empty()).unwrap())
             .await
             .unwrap();
 

@@ -396,8 +396,8 @@ pub struct TwoFactorSetupRequest {
 /// `POST /api/v1/auth/2fa/verify`.
 pub async fn two_factor_setup(
     State(state): State<AppState>,
-    auth: crate::auth::AuthContext,) -> Result<Json<serde_json::Value>, Response> {
-
+    auth: crate::auth::AuthContext,
+) -> Result<Json<serde_json::Value>, Response> {
     // Generate secret and URL.
     let secret = crate::auth::totp::generate_totp_secret();
     let url = crate::auth::totp::totp_url(
@@ -447,7 +447,9 @@ pub async fn two_factor_verify(
     Json(req): Json<TwoFactorVerifyRequest>,
 ) -> Result<Json<serde_json::Value>, Response> {
     if !crate::auth::totp::verify_totp(&req.secret, &req.code) {
-        return Err(unauthorized_response("invalid TOTP code — check your authenticator app"));
+        return Err(unauthorized_response(
+            "invalid TOTP code — check your authenticator app",
+        ));
     }
 
     // Generate backup codes (hashed).
@@ -530,18 +532,18 @@ pub fn make_user(
     use crate::auth::password::hash_password;
     use secrecy::SecretString;
     let hash = hash_password(plaintext_password).expect("bcrypt hash");
-        crate::auth::User {
-            id: id.to_string(),
-            username: username.to_string(),
-            display_name: username.to_string(),
-            email: None,
-            password_hash: SecretString::new(hash.into_boxed_str()),
-            role,
-            enabled: true,
-            totp_secret: None,
-            totp_enabled: false,
-            backup_codes: vec![],
-        }
+    crate::auth::User {
+        id: id.to_string(),
+        username: username.to_string(),
+        display_name: username.to_string(),
+        email: None,
+        password_hash: SecretString::new(hash.into_boxed_str()),
+        role,
+        enabled: true,
+        totp_secret: None,
+        totp_enabled: false,
+        backup_codes: vec![],
+    }
 }
 
 impl UserStore {

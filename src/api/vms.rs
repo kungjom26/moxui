@@ -426,7 +426,15 @@ mod list_vms_contract_tests {
         let priv_pem = include_bytes!("../../tests/fixtures/test_jwt_priv.pem");
         let pub_pem = include_bytes!("../../tests/fixtures/test_jwt_pub.pem");
         let jwt = JwtService::new(priv_pem, pub_pem, "test", "test").expect("test jwt");
-        let state = AppState::new(app_cfg, vec![client], audit, jwt, UserStore::new(), None);
+        let state = AppState::new(
+            app_cfg,
+            vec![client],
+            audit,
+            jwt,
+            UserStore::new(),
+            None,
+            None,
+        );
         let app = crate::api::router(state);
         (server, app)
     }
@@ -666,7 +674,15 @@ mod vm_config_contract_tests {
         let priv_pem = include_bytes!("../../tests/fixtures/test_jwt_priv.pem");
         let pub_pem = include_bytes!("../../tests/fixtures/test_jwt_pub.pem");
         let jwt = JwtService::new(priv_pem, pub_pem, "test", "test").expect("test jwt");
-        let state = AppState::new(app_cfg, vec![client], audit, jwt, UserStore::new(), None);
+        let state = AppState::new(
+            app_cfg,
+            vec![client],
+            audit,
+            jwt,
+            UserStore::new(),
+            None,
+            None,
+        );
         let app = crate::api::router(state);
         (server, app)
     }

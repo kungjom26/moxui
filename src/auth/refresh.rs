@@ -180,15 +180,14 @@ impl RefreshStore {
     /// ⚠️ **Replay detection**: if the old token was **already** revoked
     /// (meaning someone replayed it), we revoke **all** tokens for that
     /// user ([family revocation], draft-ietf-oauth-security-topics §4.12).
-    pub fn rotate(
-        &self,
-        raw_token: &str,
-        ttl_secs: i64,
-    ) -> Option<IssuedRefreshToken> {
+    pub fn rotate(&self, raw_token: &str, ttl_secs: i64) -> Option<IssuedRefreshToken> {
         let hash = hash_token(raw_token);
         let mut map = self.tokens.write().expect("refresh store lock");
 
-        let found = map.iter().find(|(_, r)| r.token_hash == hash).map(|(id, r)| (id.clone(), r.clone()));
+        let found = map
+            .iter()
+            .find(|(_, r)| r.token_hash == hash)
+            .map(|(id, r)| (id.clone(), r.clone()));
 
         match found {
             None => None,

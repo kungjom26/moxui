@@ -45,8 +45,7 @@ impl IpRateLimiter {
     /// Build a new limiter from configuration.
     pub fn new(config: &RateLimitConfig) -> Self {
         let quota = Quota::per_second(
-            NonZeroU32::new(u32::try_from(config.requests_per_second).unwrap_or(u32::MAX))
-                .unwrap(),
+            NonZeroU32::new(u32::try_from(config.requests_per_second).unwrap_or(u32::MAX)).unwrap(),
         )
         .allow_burst(NonZeroU32::new(config.burst_size).unwrap());
         Self {
@@ -161,8 +160,8 @@ pub fn login_rate_limiter() -> GovRateLimiter<
     governor::clock::DefaultClock,
     governor::middleware::NoOpMiddleware,
 > {
-    let quota = Quota::per_second(NonZeroU32::new(5).unwrap())
-        .allow_burst(NonZeroU32::new(10).unwrap());
+    let quota =
+        Quota::per_second(NonZeroU32::new(5).unwrap()).allow_burst(NonZeroU32::new(10).unwrap());
     GovRateLimiter::direct(quota)
 }
 
@@ -178,9 +177,10 @@ mod tests {
             burst_size: 50,
         };
         let limiter = IpRateLimiter::new(&config);
-        let key = IpRateLimiter::key_from_addr(&std::net::SocketAddr::V4(
-            SocketAddrV4::new(Ipv4Addr::new(10, 0, 0, 1), 8080),
-        ));
+        let key = IpRateLimiter::key_from_addr(&std::net::SocketAddr::V4(SocketAddrV4::new(
+            Ipv4Addr::new(10, 0, 0, 1),
+            8080,
+        )));
 
         // Should accept the first N requests
         for _ in 0..10 {
@@ -193,10 +193,7 @@ mod tests {
         let limiter = login_rate_limiter();
         // First 10 should be OK (burst = 10)
         for _ in 0..10 {
-            assert!(
-                limiter.check().is_ok(),
-                "burst of 10 should be allowed"
-            );
+            assert!(limiter.check().is_ok(), "burst of 10 should be allowed");
         }
     }
 

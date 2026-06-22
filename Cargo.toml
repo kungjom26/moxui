@@ -96,6 +96,8 @@ futures-util = "0.3"
 
 # Rate limiting
 governor = "0.10"
+# WebAuthn / passkey support
+webauthn-rs = "0.5"
 axum-server = { version = "0.7.2", default-features = false, features = ["tls-rustls"] }
 tokio-rustls = "0.26.4"
 

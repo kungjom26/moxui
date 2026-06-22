@@ -1,0 +1,49 @@
+# cargo-deny configuration
+#
+# Run locally: cargo deny check
+# See https://embarkstudios.github.io/cargo-deny/
+
+[graph]
+# Skip dev dependencies in license/advisory checks
+exclude-dev = true
+
+[advisories]
+# Ignore specific advisories (use sparingly — prefer upgrading the crate)
+ignore = [
+    # Example: { id = "RUSTSEC-2024-0001", reason = "Under review" },
+]
+
+# Severity threshold: only fail on advisories at or above this level
+severity-threshold = "high"
+
+[licenses]
+# Which licenses are allowed
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+    "CC0-1.0",
+    "OpenSSL",
+    "0BSD",
+    "MPL-2.0",
+]
+
+# Fail when a license isn't in the allow list
+unlicensed = "deny"
+
+# Confidence threshold for license detection (0.0 - 1.0)
+confidence-threshold = 0.8
+
+[licenses.private]
+# Treat the workspace crate itself as unlicensed (we own it)
+ignore = true
+
+[bans]
+# Prevent multiple versions of the same crate
+multiple-versions = "deny"

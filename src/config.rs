@@ -152,6 +152,47 @@ pub struct AuthConfig {
     /// API key-based authentication (alternative to JWT).
     #[serde(default)]
     pub api_key: ApiKeyConfig,
+    /// WebAuthn / passkey configuration.
+    #[serde(default)]
+    pub webauthn: WebauthnConfig,
+}
+
+/// WebAuthn / passkey configuration.
+#[derive(Debug, Clone, Deserialize)]
+pub struct WebauthnConfig {
+    /// Whether WebAuthn / passkey auth is enabled.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Relying Party ID (domain, e.g. `moxui.example.com`).
+    #[serde(default = "default_webauthn_rp_id")]
+    pub rp_id: String,
+    /// Relying Party origin (e.g. `https://moxui.example.com`).
+    #[serde(default = "default_webauthn_rp_origin")]
+    pub rp_origin: String,
+    /// Relying Party display name.
+    #[serde(default = "default_webauthn_rp_name")]
+    pub rp_name: String,
+}
+
+fn default_webauthn_rp_id() -> String {
+    "localhost".to_string()
+}
+fn default_webauthn_rp_origin() -> String {
+    "http://localhost:8080".to_string()
+}
+fn default_webauthn_rp_name() -> String {
+    "MoxUI".to_string()
+}
+
+impl Default for WebauthnConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            rp_id: "localhost".to_string(),
+            rp_origin: "http://localhost:8080".to_string(),
+            rp_name: "MoxUI".to_string(),
+        }
+    }
 }
 
 /// Rate limiting configuration (tower-governor).
@@ -165,8 +206,12 @@ pub struct RateLimitConfig {
     pub burst_size: u32,
 }
 
-fn default_rate_per_sec() -> u64 { 5 }
-fn default_rate_burst() -> u32 { 10 }
+fn default_rate_per_sec() -> u64 {
+    5
+}
+fn default_rate_burst() -> u32 {
+    10
+}
 
 impl Default for RateLimitConfig {
     fn default() -> Self {
@@ -189,7 +234,9 @@ pub struct CorsConfig {
     pub max_age_secs: u64,
 }
 
-fn default_cors_max_age() -> u64 { 86400 }
+fn default_cors_max_age() -> u64 {
+    86400
+}
 
 impl Default for CorsConfig {
     fn default() -> Self {

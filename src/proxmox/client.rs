@@ -1207,6 +1207,7 @@ mod vm_action_integration_tests {
             jwt,
             UserStore::new(),
             None,
+            None,
         );
         (server, state, audit)
     }
@@ -1644,23 +1645,42 @@ mod vm_action_integration_tests {
                 format: "pretty".to_string(),
             },
             clusters: vec![],
-            auth: AuthConfig { jwt_lifetime_secs: 3600, ..AuthConfig::default() },
+            auth: AuthConfig {
+                jwt_lifetime_secs: 3600,
+                ..AuthConfig::default()
+            },
         };
         let priv_pem = include_bytes!("../../tests/fixtures/test_jwt_priv.pem");
         let pub_pem = include_bytes!("../../tests/fixtures/test_jwt_pub.pem");
         let jwt = JwtService::new(priv_pem, pub_pem, "test", "test").expect("test jwt");
 
         // Seed users for login tests.
-        let admin = crate::api::auth::make_user("admin", "admin", "admin-pwd", crate::auth::Role::Admin);
-        let operator = crate::api::auth::make_user("operator", "operator", "operator-pwd", crate::auth::Role::Operator);
-        let viewer = crate::api::auth::make_user("viewer", "viewer", "viewer-pwd", crate::auth::Role::Viewer);
+        let admin =
+            crate::api::auth::make_user("admin", "admin", "admin-pwd", crate::auth::Role::Admin);
+        let operator = crate::api::auth::make_user(
+            "operator",
+            "operator",
+            "operator-pwd",
+            crate::auth::Role::Operator,
+        );
+        let viewer = crate::api::auth::make_user(
+            "viewer",
+            "viewer",
+            "viewer-pwd",
+            crate::auth::Role::Viewer,
+        );
         let disabled = {
-            let mut u = crate::api::auth::make_user("disabled", "disabled", "pwd", crate::auth::Role::Viewer);
+            let mut u = crate::api::auth::make_user(
+                "disabled",
+                "disabled",
+                "pwd",
+                crate::auth::Role::Viewer,
+            );
             u.enabled = false;
             u
         };
         let users = crate::auth::UserStore::with_users(vec![admin, operator, viewer, disabled]);
-        let state = AppState::new(cfg, vec![], audit.clone(), jwt, users, None);
+        let state = AppState::new(cfg, vec![], audit.clone(), jwt, users, None, None);
         (state, audit)
     }
 
@@ -1685,7 +1705,10 @@ mod vm_action_integration_tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let body_bytes = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
         let body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
-        assert!(body["token"].as_str().unwrap().starts_with("eyJ"), "expected JWT");
+        assert!(
+            body["token"].as_str().unwrap().starts_with("eyJ"),
+            "expected JWT"
+        );
         assert_eq!(body["token_type"], "Bearer");
         assert!(
             body["expires_in"].as_i64().unwrap_or(0) > 0
@@ -1825,9 +1848,7 @@ mod vm_action_integration_tests {
     // ── Day 15: Refresh + logout integration tests ────────────────
 
     /// Helper: login and extract the refresh token.
-    async fn login_and_get_refresh(
-        app: &mut axum::Router,
-    ) -> (String, String) {
+    async fn login_and_get_refresh(app: &mut axum::Router) -> (String, String) {
         let body = r#"{"username":"admin","password":"admin-pwd"}"#;
         let resp = app
             .clone()
@@ -2199,7 +2220,15 @@ mod vm_action_integration_tests {
                 exp: chrono::Utc::now().timestamp() + 300,
             })
             .expect("encode");
-        let state = AppState::new(cfg, vec![], audit.clone(), jwt, crate::auth::UserStore::new(), None);
+        let state = AppState::new(
+            cfg,
+            vec![],
+            audit.clone(),
+            jwt,
+            crate::auth::UserStore::new(),
+            None,
+            None,
+        );
         let app = crate::api::router(state);
 
         // VM list with 0 clusters should return empty array, not crash.

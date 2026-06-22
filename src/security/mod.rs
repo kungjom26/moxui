@@ -4,9 +4,7 @@ pub mod api_key;
 pub mod rate_limiter;
 
 pub use api_key::{ApiKeyAuthenticated, ApiKeyConfig, ApiKeyLayer};
-pub use rate_limiter::{
-    login_rate_limiter, IpRateLimiter, RateLimitLayer, RateLimitService,
-};
+pub use rate_limiter::{login_rate_limiter, IpRateLimiter, RateLimitLayer, RateLimitService};
 
 /// Build a CORS layer from configuration.
 ///
@@ -24,8 +22,19 @@ pub fn cors_layer(config: &crate::config::CorsConfig) -> tower_http::cors::CorsL
             .collect();
         tower_http::cors::CorsLayer::new()
             .allow_origin(origins)
-            .allow_methods([axum::http::Method::GET, axum::http::Method::POST, axum::http::Method::PUT, axum::http::Method::DELETE, axum::http::Method::PATCH, axum::http::Method::OPTIONS])
-            .allow_headers([axum::http::header::CONTENT_TYPE, axum::http::header::AUTHORIZATION, axum::http::header::HeaderName::from_static("x-api-key")])
+            .allow_methods([
+                axum::http::Method::GET,
+                axum::http::Method::POST,
+                axum::http::Method::PUT,
+                axum::http::Method::DELETE,
+                axum::http::Method::PATCH,
+                axum::http::Method::OPTIONS,
+            ])
+            .allow_headers([
+                axum::http::header::CONTENT_TYPE,
+                axum::http::header::AUTHORIZATION,
+                axum::http::header::HeaderName::from_static("x-api-key"),
+            ])
             .max_age(std::time::Duration::from_secs(config.max_age_secs))
     }
 }

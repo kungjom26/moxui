@@ -10,6 +10,7 @@ use secrecy::SecretBox;
 use tokio::sync::{Mutex, RwLock};
 
 use crate::audit::AuditStore;
+use crate::auth::webauthn::WebauthnState;
 use crate::auth::{JwtService, PreAuthStore, RefreshStore, UserStore};
 use crate::config::Config;
 use crate::proxmox::ProxmoxClient;
@@ -71,6 +72,8 @@ pub struct AppState {
     pub refresh_store: Arc<RefreshStore>,
     /// Pre-auth (2FA pending) session store.
     pub preauth: Arc<PreAuthStore>,
+    /// WebAuthn / passkey state. `None` when disabled.
+    pub webauthn: Option<Arc<WebauthnState>>,
     /// HMAC secret used to mint + verify short-lived VNC tokens.
     /// `None` when VNC is disabled (operator opted out by not setting
     /// `auth.vnc_token_secret_pem_path` in the config); the VNC
@@ -98,6 +101,7 @@ impl AppState {
         jwt: JwtService,
         users: UserStore,
         vnc_secret: Option<SecretBox<Vec<u8>>>,
+        webauthn_state: Option<WebauthnState>,
     ) -> Self {
         Self {
             config: Arc::new(config),
@@ -108,6 +112,7 @@ impl AppState {
             users: Arc::new(users),
             refresh_store: Arc::new(RefreshStore::new()),
             preauth: Arc::new(PreAuthStore::new()),
+            webauthn: webauthn_state.map(Arc::new),
             vnc_secret: vnc_secret.map(Arc::new),
             vnc_limiters: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -228,6 +233,7 @@ mod tests {
             test_jwt(),
             UserStore::new(),
             None,
+            None,
         );
         assert_eq!(state.config.server.bind, "0.0.0.0:8080");
         assert_eq!(state.clients.len(), 0);
@@ -259,7 +265,15 @@ mod tests {
         let c1 = ProxmoxClient::new(cluster1).await.unwrap();
         let c2 = ProxmoxClient::new(cluster2).await.unwrap();
         let audit = std::sync::Arc::new(crate::audit::AuditStore::open_in_memory().unwrap());
-        let state = AppState::new(cfg, vec![c1, c2], audit, test_jwt(), UserStore::new(), None);
+        let state = AppState::new(
+            cfg,
+            vec![c1, c2],
+            audit,
+            test_jwt(),
+            UserStore::new(),
+            None,
+            None,
+        );
 
         assert_eq!(state.clients.len(), 2);
         assert!(state.client("homelab").is_some());
@@ -277,6 +291,7 @@ mod tests {
             audit,
             test_jwt(),
             UserStore::new(),
+            None,
             None,
         );
         let snap = state.readiness().await;

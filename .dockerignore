@@ -1,0 +1,61 @@
+# Git
+.git/
+.gitignore
+
+# Rust / Cargo
+target/
+Cargo.lock.bak
+**/*.rs.bk
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+.env
+.env.local
+*.pem
+*.key
+*.crt
+config.local.yaml
+config.production.yaml
+
+# Runtime data
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.db.audit
+backups/
+
+# Build artifacts
+*.tar.gz
+*.zip
+*.deb
+*.rpm
+
+# Logs
+*.log
+logs/
+
+# Coverage
+coverage/
+*.profraw
+
+# Hermes (local-only)
+.hermes/
+profiles/
+hermes/
+
+# Docs (internal)
+docs/
+
+# Benchmarks (exclude from Docker — run natively)
+benches/
+
+# Tests (not needed at runtime)
+tests/
