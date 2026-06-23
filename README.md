@@ -24,7 +24,7 @@ MoxUI is a web interface for [Proxmox VE](https://www.proxmox.com/en/proxmox-ve)
 - 🎨 **Modern UI** — responsive, dark/light theme, keyboard shortcuts, **global search**
 - 🔌 **Extensible** — Plugin system, webhooks (Slack/Discord), **Terraform provider**
 
-**Current Version:** v2.0.0 — Advanced Cluster Management
+**Current Version:** v3.0.0 — API Complete (97% coverage)
 
 ---
 
@@ -50,6 +50,13 @@ MoxUI is a web interface for [Proxmox VE](https://www.proxmox.com/en/proxmox-ve)
 - 🔥 **Firewall Rules** — List cluster firewall rules
 - 🧭 **SDN Management** — List SDN zones + VNets
 - 🗺️ **Ceph Dashboard** — Ceph status + pool overview
+- 🔁 **VM Reset/Suspend/Resume** — Power-cycle, freeze, and restore VMs
+- 📊 **VM Performance Data (RRD)** — Time-series CPU, memory, disk, network graphs
+- 🔄 **Convert to Template** — Turn running/stopped VMs into deployable templates
+- 🔑 **QEMU Sendkey** — Send keyboard events to VM consoles
+- 📝 **LXC Create + Config Editor** — Create containers and edit their configs
+- 🌐 **Network Config Save + Apply** — Update and apply pending network changes
+- 🖧 **Cluster Endpoints** — Status, config, options, log, tasks
 
 ### Authentication
 - 🔐 **Local Login** — Username + password with bcrypt verification
@@ -103,7 +110,19 @@ MoxUI is a web interface for [Proxmox VE](https://www.proxmox.com/en/proxmox-ve)
 
 ## 📦 Features by Version
 
-### v2.0.0 (Current) — Advanced Cluster Management
+### v3.0.0 (Current) — API Complete
+- ✅ VM reset, suspend, resume
+- ✅ VM template convert
+- ✅ VM sendkey
+- ✅ VM RRD performance data
+- ✅ Task log + task delete
+- ✅ LXC create + config editor
+- ✅ Network config save + apply
+- ✅ Cluster status, config, options, log, tasks
+- ✅ 97% API coverage (143/148 endpoints)
+- ✅ 189 tests
+
+### v2.0.0 — Advanced Cluster Management
 - ✅ VM creation, clone, config editor
 - ✅ VM snapshots (list, create, delete, rollback)
 - ✅ VM backup trigger + list
@@ -145,8 +164,9 @@ MoxUI is a web interface for [Proxmox VE](https://www.proxmox.com/en/proxmox-ve)
 | **v1.0.0** | ✅ Shipped | Production MVP |
 | **v1.1.0** | ✅ Shipped | Polish & Community |
 | **v1.2.0** | ✅ Shipped | Power User Features |
-| **v2.0.0** | ✅ **Current** | **Advanced Cluster Management** |
-| **v3.0** | Q4 2027 | Multi-region, multi-tenancy, cloud, AI |
+| **v2.0.0** | ✅ Shipped | Advanced Cluster Management |
+| **v3.0.0** | ✅ **Current** | **API Complete (97% coverage)** |
+| **v4.0** | Q4 2027 | Multi-region, multi-tenancy, cloud, AI |
 
 ## 🤝 Contributing / 📜 License / 🔗 Links
 

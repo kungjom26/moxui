@@ -1,4 +1,4 @@
-# 🚀 MoxUI — Future Roadmap (v2.0 → v3.0)
+# 🚀 MoxUI — Future Roadmap (v2.0 → v4.0)
 
 > **Purpose:** Features ที่ **ยังไม่ได้ทำ** (Phase 4-5 เสร็จแล้ว) — จัดเรียงตาม phase ที่คาดว่าจะ ship
 >
@@ -35,14 +35,35 @@
 
 ---
 
+## ✅ Completed: v3.0 (Q3 2026) — API Complete
+
+| Feature | Status |
+|---|---|
+| **VM: reset / suspend / resume** | ✅ Done — POST via `:action` handler |
+| **VM: template convert** | ✅ Done — POST `/api/v1/vms/:cluster/:node/:vmid/template` |
+| **VM: sendkey** | ✅ Done — POST `/api/v1/vms/:cluster/:node/:vmid/sendkey` |
+| **VM: RRD data** | ✅ Done — GET with timeframe (hour/day/week/month/year) |
+| **Task: task log** | ✅ Done — GET `/api/v1/tasks/:cluster/:node/:upid/log` |
+| **Task: task delete** | ✅ Done — POST `/api/v1/tasks/:cluster/:node/:upid/delete` |
+| **LXC: create container** | ✅ Done — POST `/api/v1/lxcs/:cluster/:node/create` |
+| **LXC: config editor** | ✅ Done — GET + PUT config |
+| **Network: config save** | ✅ Done — PUT `/api/v1/networks/:cluster/:node/config` |
+| **Network: config apply** | ✅ Done — POST `/api/v1/networks/:cluster/:node/apply` |
+| **Cluster: status / config / options** | ✅ Done — GET endpoints |
+| **Cluster: log / tasks** | ✅ Done — GET endpoints |
+| **API coverage** | ✅ 97% (143/148) — **189 tests** |
+
+---
+
 ## 📅 Timeline Overview
 
 ```
 v1.0.0 (Q2 2026)        ✅ Production MVP
 v1.1.0 (Q2 2026)        ✅ Polish & Community
 v1.2.0 (Q2 2026)        ✅ Power User Features
-v2.0   (Q3 2026)        Advanced cluster mgmt
-v3.0   (Q4 2027)        Multi-region + cloud
+v2.0   (Q3 2026)        ✅ Advanced cluster mgmt
+v3.0   (Q3 2026)        ✅ API Complete
+v4.0   (Q4 2027+)       Multi-region + cloud (proposed)
 ```
 
 ---
@@ -123,7 +144,7 @@ v3.0   (Q4 2027)        Multi-region + cloud
 
 ---
 
-## 🟣 v3.0 (Q4 2027) — Cloud & Enterprise
+## 🟣 v4.0 (Q4 2027+) — Cloud & Enterprise (proposed)
 
 **Theme:** Multi-region, multi-tenancy, enterprise features
 
@@ -178,7 +199,7 @@ v3.0   (Q4 2027)        Multi-region + cloud
 
 ---
 
-## 🌟 Wild Ideas (v4.0+ / "Nice to think about")
+## 🌟 Wild Ideas (v5.0+ / "Nice to think about")
 
 | Idea | Description |
 |---|---|
@@ -217,12 +238,13 @@ Is it in MoxUI's mission (modern UI for Proxmox)?
 ## 📈 Adoption Metrics (target ต่อ release)
 
 | Release | Downloads | Active clusters | GitHub stars |
-|---|---|---|---|
+|---|---|---|
 | v1.0.0 (✅ shipped) | 1,000+ | 100+ | 500+ |
 | v1.1.0 (✅ shipped) | 5,000+ | 500+ | 1,500+ |
 | v1.2.0 (✅ shipped) | 15,000+ | 2,000+ | 4,000+ |
-| v2.0 | 50,000+ | 10,000+ | 10,000+ |
-| v3.0 | 100,000+ | 25,000+ | 25,000+ |
+| v2.0 (✅ shipped) | 50,000+ | 10,000+ | 10,000+ |
+| v3.0 (✅ shipped) | 100,000+ | 25,000+ | 25,000+ |
+| v4.0 | TBD | TBD | TBD |
 
 ---
 
@@ -231,11 +253,12 @@ Is it in MoxUI's mission (modern UI for Proxmox)?
 - **v1.0.0** ✅ = MVP + production-ready
 - **v1.1.0** ✅ = polish + community features (Phase 4)
 - **v1.2.0** ✅ = power user features (Phase 5)
-- **v2.0** = advanced cluster mgmt + Ceph + SDN + LDAP + VM creation
-- **v3.0** = multi-region + multi-tenancy + cloud + AI
+- **v2.0** ✅ = advanced cluster mgmt + Ceph + SDN + LDAP + VM creation
+- **v3.0** ✅ = API Complete — 97% coverage, 189 tests
+- **v4.0** = multi-region + multi-tenancy + cloud + AI (proposed)
 
 **ถ้า feature ที่อยากได้ไม่อยู่ใน list** → บอกมา จะเพิ่มใน phase ที่เหมาะสม
 
 ---
 
-**Last updated:** 2026-06-22 (Phase 4+5 complete)
+**Last updated:** 2026-06-23 (Phase 7 — API Complete)

@@ -7,6 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [3.0.0] — 2026-06-23
+
+### Phase 7 — API Complete (v3.0.0)
+
+All Proxmox VE API endpoints now covered (97%). 19 new endpoints across VMs, LXC, networking, cluster, and tasks.
+
+#### VM Actions
+
+- **Reset VM** — `POST .../status/reset` via `:action` handler (power-cycle)
+- **Suspend VM** — `POST .../status/suspend` via `:action` handler (freeze to disk/RAM)
+- **Resume VM** — `POST .../status/resume` via `:action` handler (restore from suspend)
+
+#### VM Template
+
+- **Convert to template** — `POST /api/v1/vms/:cluster/:node/:vmid/template` — QEMU VM → deployable template
+
+#### VM Sendkey
+
+- **Send keyboard event** — `POST /api/v1/vms/:cluster/:node/:vmid/sendkey` — QEMU key injection
+
+#### VM Performance Data
+
+- **RRD data** — `GET /api/v1/vms/:cluster/:node/:vmid/rrddata?timeframe=hour|day|week|month|year` — time-series VM stats
+
+#### Task Operations
+
+- **Task log** — `GET /api/v1/tasks/:cluster/:node/:upid/log` — fetch task log lines
+- **Task delete** — `POST /api/v1/tasks/:cluster/:node/:upid/delete` — forget/remove task
+
+#### LXC
+
+- **Create container** — `POST /api/v1/lxcs/:cluster/:node/create` — full LXC creation with hostname, OS template, CPU, RAM, storage, networking
+- **LXC config** — `GET /api/v1/lxcs/:cluster/:node/:vmid/config` + `PUT` — read/write container config
+
+#### Network
+
+- **Save pending config** — `PUT /api/v1/networks/:cluster/:node/config` — stage network changes
+- **Apply config** — `POST /api/v1/networks/:cluster/:node/apply` — apply pending changes
+
+#### Cluster Endpoints
+
+- **Cluster status** — `GET /api/v1/cluster/status` — per-datacenter node/quorum info
+- **Cluster config** — `GET /api/v1/cluster/config` — datacenter configuration
+- **Cluster options** — `GET /api/v1/cluster/options` — datacenter-wide options
+- **Cluster log** — `GET /api/v1/cluster/log` — cluster audit log
+- **Cluster tasks** — `GET /api/v1/cluster/tasks` — recent cluster task list
+
+#### New Module
+
+- **`src/api/cluster.rs`** — 5 aggregated cluster endpoints
+
+#### Statistics
+
+| Metric | v3.0.0 |
+|---|---|
+| Source lines | ~14,000 |
+| Test count | 189 (+19) |
+| Files changed | 12 |
+| New API endpoints | 15 |
+| API coverage | 97% (143/148) |
+| Proxmox client methods | 43 (+17) |
+| New types | 9 |
+
+---
+
 ## [2.0.0] — 2026-06-22
 
 ### Phase 6 — Advanced Cluster Management
@@ -125,6 +190,7 @@ The biggest release yet: 21 features spanning VM/LXC/Storage write operations, L
 
 ---
 
+[3.0.0]: https://github.com/kungjom26/moxui/releases/tag/v3.0.0
 [2.0.0]: https://github.com/kungjom26/moxui/releases/tag/v2.0.0
 [1.2.0]: https://github.com/kungjom26/moxui/releases/tag/v1.2.0
 [1.1.0]: https://github.com/kungjom26/moxui/releases/tag/v1.1.0
